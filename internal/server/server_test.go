@@ -501,3 +501,25 @@ func TestEditAndChangesEndpoints(t *testing.T) {
 		t.Fatalf("record change: %d", resp.StatusCode)
 	}
 }
+
+func TestDesignAndExportRoutes(t *testing.T) {
+	e := newEnv(t)
+	e.open()
+	resp, data := e.do("GET", "/design/daisyui.css", nil, nil)
+	if resp.StatusCode != 200 || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/css") || len(data) < 1000 {
+		t.Fatalf("design css: %d %s", resp.StatusCode, resp.Header.Get("Content-Type"))
+	}
+	if resp, _ := e.do("GET", "/design/../web.go", nil, nil); resp.StatusCode == 200 {
+		t.Fatal("design route served a file outside the vendored set")
+	}
+	if resp, _ := e.do("GET", "/design/LICENSE-daisyui", nil, nil); resp.StatusCode != 404 {
+		t.Fatalf("design route must serve only the listed files: %d", resp.StatusCode)
+	}
+
+	write(t, filepath.Join(filepath.Dir(e.file), "style.css"), "h1{color:red}")
+	write(t, e.file, `<!doctype html><link rel="stylesheet" href="style.css"><body><h1>Plan</h1></body>`)
+	resp, data = e.do("GET", "/export/"+e.key, nil, nil)
+	if resp.StatusCode != 200 || !strings.Contains(resp.Header.Get("Content-Disposition"), `filename="plan.export.html"`) || !strings.Contains(string(data), "<style>h1{color:red}</style>") {
+		t.Fatalf("export: %d %v\n%s", resp.StatusCode, resp.Header, data)
+	}
+}

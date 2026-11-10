@@ -7,10 +7,14 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 
 	"github.com/riftsin/redline/internal/artifact"
+	"github.com/riftsin/redline/internal/export"
 	"github.com/riftsin/redline/internal/paths"
 	"github.com/riftsin/redline/internal/store"
+	"github.com/riftsin/redline/web"
 )
 
 // SDKTag is the one tag injected into a served artifact.
@@ -83,4 +87,46 @@ func sandboxHeaders(w http.ResponseWriter) {
 	h.Set("Content-Security-Policy", "sandbox "+Sandbox)
 	h.Set("Cache-Control", "no-store")
 	h.Set("X-Content-Type-Options", "nosniff")
+}
+
+// design serves the vendored Tailwind/DaisyUI files. They are loaded by
+// sandboxed (opaque-origin) artifacts as plain stylesheets and scripts.
+func (s *Server) design(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("asset")
+	contentType, ok := web.DesignFiles[name]
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	data, err := fs.ReadFile(web.Design, "design/"+name)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	h := w.Header()
+	h.Set("Content-Type", contentType)
+	h.Set("Cache-Control", "public, max-age=86400")
+	h.Set("X-Content-Type-Options", "nosniff")
+	_, _ = w.Write(data)
+}
+
+// exportArtifact downloads the portable copy of a session's artifact.
+func (s *Server) exportArtifact(w http.ResponseWriter, r *http.Request) {
+	sess, err := s.m.Store.Session(r.Context(), r.PathValue("key"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	data, warnings, err := export.Bundle(sess.File, export.LimitsFromEnv(os.Getenv))
+	if err != nil {
+		http.Error(w, "The artifact could not be exported: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h := w.Header()
+	h.Set("Content-Type", "text/html; charset=utf-8")
+	h.Set("Content-Disposition", `attachment; filename="`+strings.ReplaceAll(export.FileName(sess.File), `"`, "")+`"`)
+	h.Set("Cache-Control", "no-store")
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("Redline-Export-Warnings", strconv.Itoa(len(warnings)))
+	_, _ = w.Write(data)
 }

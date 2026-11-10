@@ -73,6 +73,18 @@ agent writes artifact.html
 - **On a phone** (under 860px) the artifact takes the screen and the conversation is a bottom sheet:
   tap or swipe the dock up; tap the dimmed page, swipe down or press Escape to lower it.
 
+## Export
+
+`redline export <file>` (or **Export standalone HTML** in the review page's menu) writes
+`<name>.export.html`: one file with the artifact's local stylesheets, scripts, images, fonts and media
+inlined, and redline's `/design/*` Tailwind + DaisyUI files too. Remote `https://` references stay
+links. Nothing is fetched, reads are confined to the artifact's folder, other `file://` URLs become
+`about:blank`, and the SDK is never included. Anything that could not be inlined is listed as a
+warning. Caps: `REDLINE_EXPORT_MAX_ASSET_BYTES` (10 MB) and `REDLINE_EXPORT_MAX_BUNDLE_BYTES` (25 MB).
+
+`redline <file>` and `export` also warn when an artifact never paints its own page background, since
+its text could be invisible depending on where it is shown.
+
 ## CLI
 
 | Command | |
@@ -82,8 +94,9 @@ agent writes artifact.html
 | `redline poll <html-file> [--owner <label>] [--takeover] [--agent-reply "…" \| --agent-reply-file <path\|->]` | Wait for the reviewer's feedback |
 | `redline reply <html-file> (--agent-reply "…" \| --agent-reply-file <path\|->)` | Post a reply, exit 0 once accepted |
 | `redline end <html-file>` | End the session as the agent (reopens normally later) |
+| `redline export <html-file> [--out <path>]` | Write a portable copy with local assets inlined |
 | `redline stop` | Stop the background server |
-| `redline design` | Design guidance and the Tailwind + DaisyUI snippet |
+| `redline design` | Design guidance and the Tailwind + DaisyUI snippets (served locally at `/design/*`, or from a CDN) |
 | `redline playbook [id]` | Artifact playbooks: diagram, table, comparison, plan, code, input, explanation, slides |
 
 Output is plain text. Failures print `redline: <message>` with `hint:` lines and exit 2 for invalid

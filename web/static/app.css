@@ -326,7 +326,8 @@ button {
   box-shadow: var(--shadow);
 }
 
-.menu-items button {
+.menu-items button,
+.menu-items a {
   padding: 8px 10px;
   border: 0;
   border-radius: 6px;
@@ -337,7 +338,12 @@ button {
   cursor: pointer;
 }
 
-.menu-items button:hover {
+.menu-items a {
+  text-decoration: none;
+}
+
+.menu-items button:hover,
+.menu-items a:hover {
   background: var(--bg);
 }
 

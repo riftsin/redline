@@ -202,7 +202,9 @@ func TestAgentFlowWithRealServer(t *testing.T) {
 	}
 
 	out, code := b.run(file)
-	if code != 0 || !strings.Contains(out, "Review session ready for "+file) || !strings.Contains(out, "Browser: not opened (REDLINE_NO_OPEN=1)") || !strings.Contains(out, "Next: Do not respond to the user just yet") {
+	if code != 0 || !strings.Contains(out, "Review session ready for "+file) || !strings.Contains(out, "Browser: not opened (REDLINE_NO_OPEN=1)") ||
+		!strings.Contains(out, "Warning: This artifact never paints its own page surface") || !strings.Contains(out, "Next: First fix the unpainted page surface") ||
+		!strings.Contains(out, "Do not respond to the user just yet") {
 		t.Fatalf("open: exit %d\n%s", code, out)
 	}
 	key := strings.TrimSpace(out[strings.Index(out, "/session/")+len("/session/"):])
@@ -268,6 +270,20 @@ func TestAgentFlowWithRealServer(t *testing.T) {
 	}
 	if out, code := b.run("end", file); code != 0 || !strings.Contains(out, "Ended the review") {
 		t.Fatalf("end: exit %d\n%s", code, out)
+	}
+
+	// Export needs no server; an asset next to the artifact is inlined.
+	if err := os.WriteFile(filepath.Join(dir, "style.css"), []byte("body{background:#fff}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, []byte(`<!doctype html><link rel="stylesheet" href="style.css"><body><h1>Plan</h1></body>`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, code = b.run("export", file)
+	exported := filepath.Join(dir, "plan.export.html")
+	data, _ := os.ReadFile(exported)
+	if code != 0 || !strings.Contains(out, "Exported "+file) || !strings.Contains(string(data), "<style>body{background:#fff}</style>") || strings.Contains(out, "Warning:") {
+		t.Fatalf("export: exit %d\n%s\n%s", code, out, data)
 	}
 
 	if out, code := b.run("stop"); code != 0 || !strings.Contains(out, "Stopped the redline server") {

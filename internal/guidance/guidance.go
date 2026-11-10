@@ -203,6 +203,11 @@ const themeSnippet = `<script>
   })();
 </script>`
 
+const localDesignSnippet = themeSnippet + `
+<link rel="stylesheet" href="/design/daisyui.css">
+<link rel="stylesheet" href="/design/daisyui-themes.css">
+<script src="/design/tailwindcss-browser.js"></script>`
+
 const cdnDesignSnippet = themeSnippet + `
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/daisyui@5.5.19/daisyui.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/daisyui@5.5.19/themes.css">
@@ -227,7 +232,10 @@ func Design() string {
 	b.WriteString("\nDESIGN FALLBACK\n")
 	b.WriteString("Use this fallback only if (1) the user gave no design direction and (2) you already inspected the project the artifact is about and found no design system or style conventions to match. If you have not checked the subject project yet, check first. redline does not inject any design system; artifacts stay portable HTML. Paint an explicit page background and readable text. redline adds only its SDK script to your file and never wraps a fragment, so start it with `<!doctype html>`: without one the page renders in quirks mode, where `<table>` text stops inheriting the color a wrapper theme sets.\n\n")
 	b.WriteString(DesignPriorityRule + "\n\n")
-	b.WriteString("Paste this into your `<head>` and start the page with `<html data-theme=\"coffee\">` (Tailwind 4.2.4, DaisyUI 5.5.19):\n\n")
+	b.WriteString("Paste one of these into your `<head>` and start the page with `<html data-theme=\"coffee\">` (Tailwind 4.2.4, DaisyUI 5.5.19).\n\n")
+	b.WriteString("Local (served by redline itself, so it works offline while the artifact is reviewed):\n\n")
+	writeBlock(&b, localDesignSnippet, "  ")
+	b.WriteString("\nThese root paths do not resolve when the raw file is opened directly without redline; `redline export` inlines them, so an exported copy stays self-contained. When the raw file must also render on its own, use the CDN snippet instead:\n\n")
 	writeBlock(&b, cdnDesignSnippet, "  ")
 	b.WriteString("\nUse this command for common syntax. Read the latest DaisyUI docs (https://daisyui.com/components/) when using advanced or unfamiliar components. If the user asks for a different design system (Bootstrap, custom CSS, plain HTML, etc.), use that instead - redline does not require DaisyUI.\n")
 
@@ -295,6 +303,7 @@ func Home(sessions []Session, agent Agent) string {
 		"Run `redline poll <html-file>` to wait for user feedback. It long-polls and stays silent until the user sends feedback, ends the session, or leaves every review window disconnected past the reconnect grace period, so leave it running - never kill it. The only response that arrives without a user action is a fatal artifact failure, which means the review surface itself could not be used. " + PollExecution(agent) + " " + SendAndEndRule,
 		"Run `redline reply <html-file> --agent-reply \"<message>\"` to show a concise reply and exit once redline accepts it, when you are handing a result back and are not about to long-poll. The review page stops showing Working only after this command exits 0. Use `redline poll <html-file> --agent-reply \"<message>\"` when that reply should be followed by another wait for feedback. A longer reply uses `--agent-reply-file <path>` (`-` reads stdin) on either command.",
 		"Run `redline end <html-file>` to end a session as the agent - ending it this way still allows a plain reopen later. When the user ends it from the browser instead, a later `redline <html-file>` refuses to reopen it without `--reopen`.",
+		"Run `redline export <html-file> [--out <path>]` to write a portable copy of the artifact - one HTML file with its LOCAL assets inlined - so it opens with no redline server and no sibling files. Remote CDN/font references stay links, so it needs the network to render those. Users can also export from the review page's menu.",
 		"Run `redline stop` to shut down the background server.",
 		"Run `redline playbook <playbook_id>` for focused artifact guidance. " + RouterHelp(),
 		DesignSystemHint(),
@@ -315,6 +324,7 @@ Usage:
   redline poll <html-file> [--owner <label>] [--takeover] [--agent-reply "..."] [--agent-reply-file <path>]
   redline reply <html-file> (--agent-reply "..." | --agent-reply-file <path>)
   redline end <html-file>
+  redline export <html-file> [--out <path>]
   redline stop
   redline playbook [playbook_id]
   redline design
@@ -381,10 +391,15 @@ Examples:
   redline playbook diagram
   redline playbook input
 `
+	case "export":
+		return `Usage: redline export <html-file> [--out <path>]
+
+Write a portable copy of an artifact: one HTML file with its LOCAL assets inlined (relative-path stylesheets, scripts, images, fonts and media become inline <style>/<script> blocks and data URIs; the /design/* Tailwind + DaisyUI files are inlined too). Remote references (https URLs) are left as links, so the file needs the network to render those. redline makes no outbound requests: it only reads local files, confined to the artifact's directory, and replaces any other file:// URL with about:blank. Defaults to <name>.export.html next to the source; --out chooses the path. The redline SDK is never included. The review page's menu can export too.
+`
 	case "design":
 		return `Usage: redline design
 
-Show the copy-pasteable Tailwind CSS browser runtime v4 + DaisyUI v5 snippet, a content-to-playbook router, an optional layout safety CSS snippet, and a DaisyUI component reference. ` + RouterHelp() + ` The snippet is the design fallback, not the default: inspect the subject project before falling back. ` + DesignPriorityRule + "\n"
+Show the copy-pasteable Tailwind CSS browser runtime v4 + DaisyUI v5 snippets (served locally by redline, with a CDN variant), a content-to-playbook router, an optional layout safety CSS snippet, and a DaisyUI component reference. ` + RouterHelp() + ` The snippet is the design fallback, not the default: inspect the subject project before falling back. ` + DesignPriorityRule + "\n"
 	}
 	return ""
 }
@@ -392,10 +407,13 @@ Show the copy-pasteable Tailwind CSS browser runtime v4 + DaisyUI v5 snippet, a 
 // -- Next steps ------------------------------------------------------------------
 
 // OpenNextStep follows a successful `redline <html-file>`.
-func OpenNextStep(file string, agent Agent, networkWarning bool) string {
+func OpenNextStep(file string, agent Agent, networkWarning, unpainted bool) string {
 	network := ""
+	if unpainted {
+		network += "First fix the unpainted page surface flagged above and save - redline live-reloads the artifact automatically, so you do not need to re-run `redline " + file + "`. "
+	}
 	if networkWarning {
-		network = "redline could not serve every address it was asked to (see the network warning above): when you next message the user, tell them, because review links at that address will not load until it clears. "
+		network += "redline could not serve every address it was asked to (see the network warning above): when you next message the user, tell them, because review links at that address will not load until it clears. "
 	}
 	return network + "Do not respond to the user just yet. Now you must run `redline poll " + file + "`. This command long-polls until the user sends feedback, ends the session, or leaves every review window disconnected past the reconnect grace period, and it stays silent the whole time - that is normal, never kill it. Do not pass --timeout-ms during normal agent use. " + PollExecution(agent) + " After applying feedback, run `redline poll " + file + " --agent-reply \"<message for the user>\"` without --timeout-ms to show a concise response in the review page and keep waiting for more feedback. If instead you are handing back a result without starting another long-poll, run `redline reply " + file + " --agent-reply \"<message for the user>\"` to get an acceptance receipt. " + AgentReplyRule + " If the user ends the session, stop polling and do not reopen it by re-running `redline " + file + "` unless the user asks for further review or something genuinely important needs their visual attention - deliver routine updates directly in this conversation instead. When reopening is warranted, run `redline " + file + " --reopen`."
 }

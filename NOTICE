@@ -26,3 +26,15 @@ lavish-axi, which is distributed under the MIT License:
   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
   SOFTWARE.
+
+Files served to artifacts under /design/ (web/design/) are vendored unmodified
+from their npm packages, with their licenses alongside:
+
+  * tailwindcss-browser.js - @tailwindcss/browser 4.2.4 (dist/index.global.js),
+    MIT License, Copyright (c) Tailwind Labs, Inc. (web/design/LICENSE-tailwindcss)
+  * daisyui.css, daisyui-themes.css - daisyUI 5.5.19, MIT License,
+    Copyright (c) 2020 Pouya Saadeghi. (web/design/LICENSE-daisyui)
+
+The DaisyUI component reference shown by `redline design`
+(internal/guidance/daisyui.json) and the playbooks shown by `redline playbook`
+(internal/guidance/playbooks.json) are adapted from lavish-axi (see above).

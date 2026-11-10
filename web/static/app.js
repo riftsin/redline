@@ -842,6 +842,10 @@
         if (navigator.clipboard) navigator.clipboard.writeText(document.querySelector(".file-name").title).catch(() => {});
         setMenu(false);
         break;
+      case "export":
+        // The link downloads; just close the menu.
+        setMenu(false);
+        break;
       case "reload":
         reloadFrame(root.dataset.artifact + "?rev=" + state.revision + "&t=" + Date.now(), false);
         setMenu(false);

@@ -99,6 +99,10 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /api/{key}/end", s.userEnd)
 	mux.HandleFunc("POST /api/{key}/artifact-failures", s.artifactFailures)
 
+	// Vendored design files artifacts may opt into, and portable exports.
+	mux.HandleFunc("GET /design/{asset}", s.design)
+	mux.HandleFunc("GET /export/{key}", s.exportArtifact)
+
 	// The artifact and its sibling assets, framed by the review page.
 	mux.HandleFunc("GET /artifact/{key}/{path...}", s.artifact)
 	return mux

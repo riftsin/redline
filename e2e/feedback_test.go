@@ -229,3 +229,17 @@ func TestTabTitleAndMeta(t *testing.T) {
 }
 
 var _ = store.ReceiptLive
+
+func TestLocalDesignSnippetStylesTheArtifact(t *testing.T) {
+	r := newReview(t, "")
+	html := `<!doctype html><html data-theme="coffee"><head>
+<link rel="stylesheet" href="/design/daisyui.css">
+<link rel="stylesheet" href="/design/daisyui-themes.css">
+<script src="/design/tailwindcss-browser.js"></script>
+</head><body class="bg-base-100 p-6"><button id="go" class="btn btn-primary">Go</button></body></html>`
+	if err := os.WriteFile(r.file, []byte(html), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// DaisyUI styles the button and the Tailwind runtime generates p-6.
+	r.page.WaitInFrame("/artifact/", `document.getElementById('go') && getComputedStyle(document.getElementById('go')).borderRadius !== '0px' && getComputedStyle(document.body).paddingTop === '24px'`)
+}

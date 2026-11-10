@@ -12,13 +12,16 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/riftsin/redline/internal/export"
 	"github.com/riftsin/redline/internal/guidance"
+	"github.com/riftsin/redline/internal/selfpaint"
 	"github.com/riftsin/redline/internal/server"
 	"github.com/riftsin/redline/internal/store"
 )
@@ -53,6 +56,11 @@ func openCommand(e *env, args []string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	unpainted := false
+	if src, err := os.ReadFile(file); err == nil {
+		painted, _ := selfpaint.Painted(src)
+		unpainted = !painted
+	}
 	if err := e.ensureServer(); err != nil {
 		return "", err
 	}
@@ -85,7 +93,10 @@ func openCommand(e *env, args []string) (string, error) {
 	fmt.Fprintf(&b, "URL: %s\n", resp.URL)
 	fmt.Fprintf(&b, "Browser: %s\n", browser)
 	writeWarning(&b, resp.NetworkWarning)
-	b.WriteString("\nNext: " + guidance.OpenNextStep(file, e.agent, resp.NetworkWarning != "") + "\n")
+	if unpainted {
+		b.WriteString("Warning: " + selfpaint.Warning + "\n")
+	}
+	b.WriteString("\nNext: " + guidance.OpenNextStep(file, e.agent, resp.NetworkWarning != "", unpainted) + "\n")
 	return b.String(), nil
 }
 
@@ -479,6 +490,48 @@ func stopCommand(e *env, args []string) (string, error) {
 		return "", err
 	}
 	return "Stopped the redline server.\n", nil
+}
+
+// -- export ---------------------------------------------------------------------
+
+func exportCommand(e *env, args []string) (string, error) {
+	fs := flag.NewFlagSet("export", flag.ContinueOnError)
+	outFlag := fs.String("out", "", "")
+	file, err := fileArg(fs, args, "redline export <html-file> [--out <path>]")
+	if err != nil {
+		return "", err
+	}
+	out := *outFlag
+	if out == "" {
+		out = filepath.Join(filepath.Dir(file), export.FileName(file))
+	}
+	out, err = filepath.Abs(out)
+	if err != nil {
+		return "", usageError(err.Error())
+	}
+	if out == file {
+		return "", usageError("--out must not overwrite the artifact itself")
+	}
+	data, warnings, err := export.Bundle(file, export.LimitsFromEnv(e.getenv))
+	if err != nil {
+		return "", failure("cannot export " + file + ": " + err.Error())
+	}
+	if err := os.WriteFile(out, data, 0o644); err != nil {
+		return "", usageError("cannot write " + out + ": " + err.Error())
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Exported %s\nto %s (%d KB)\n", file, out, (len(data)+1023)/1024)
+	if len(warnings) > 0 {
+		b.WriteString("\nNot inlined:\n")
+		for _, w := range warnings {
+			b.WriteString("  - " + w.Kind + ": " + w.Detail + "\n")
+		}
+	}
+	if painted, _ := selfpaint.Painted(data); !painted {
+		b.WriteString("\nWarning: " + selfpaint.Warning + "\n")
+	}
+	b.WriteString("\nNext: The portable copy is at " + out + ". Local assets are inlined; remote (https) references still need the network.\n")
+	return b.String(), nil
 }
 
 // -- guidance -------------------------------------------------------------------

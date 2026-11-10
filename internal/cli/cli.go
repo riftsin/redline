@@ -64,6 +64,7 @@ var commands = map[string]func(*env, []string) (string, error){
 	"end":      endCommand,
 	"stop":     stopCommand,
 	"design":   designCommand,
+	"export":   exportCommand,
 	"playbook": playbookCommand,
 	"server":   serverCommand,
 }
