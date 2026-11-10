@@ -52,3 +52,27 @@ func waitFor(t *testing.T, cond func() bool) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+// Some filesystems stamp modification times with a coarse clock, so a quick
+// same-size rewrite can keep the old size and time. It is still a change.
+func TestSameSizeRewriteWithinOneClockTick(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "plan.html")
+	if err := os.WriteFile(path, []byte("<p>v1</p>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var changes atomic.Int32
+	stop := File(path, func() { changes.Add(1) })
+	defer stop()
+
+	if err := os.WriteFile(path, []byte("<p>v2</p>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return changes.Load() == 1 })
+}
