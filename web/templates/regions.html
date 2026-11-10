@@ -1,0 +1,50 @@
+{{/* Regions of the review page. The server renders each one again when its
+   state changes and pushes it over /events/{key}; app.js swaps the element
+   with the same id. */}}
+
+{{define "presence"}}<span id="presence" class="presence presence-{{if .Ended}}ended{{else}}{{.Presence.State}}{{end}}" role="status">{{presenceLabel .Presence .Ended}}</span>{{end}}
+
+{{define "dock-summary"}}<span id="dock-summary" class="dock-summary">{{if .Ended}}Session ended{{else}}{{with len .Queue}}{{.}} queued · {{end}}{{presenceLabel .Presence false}}{{end}}</span>{{end}}
+
+{{define "agent-banner"}}<div id="agent-banner" class="presence-banner" role="status"{{if or .Ended (ne .Presence.State "idle")}} hidden{{end}}>Your agent is not listening. If this persists, ask your agent to poll for updates.</div>{{end}}
+
+{{define "ended-banner"}}<div id="ended-banner" class="ended-banner" role="status"{{if not .Ended}} hidden{{end}}>{{if eq .EndedBy "user"}}You ended this review. Your agent continues in the terminal.{{else}}This review session has ended. Your agent continues in the terminal.{{end}}</div>{{end}}
+
+{{define "anchor"}}{{if .}}<button type="button" class="anchor" data-selector="{{.Selector}}" title="Show in the artifact"><span class="anchor-label">{{.Label}}</span>{{if .Excerpt}}<span class="anchor-excerpt">“{{.Excerpt}}”</span>{{end}}</button>{{end}}{{end}}
+
+{{define "conversation"}}<div id="conversation" class="conversation" data-queued="{{len .Queue}}">
+  {{if and (not .Transcript) (not .Queue) (not .Ended)}}
+  <p class="empty-hint">Click an element in the artifact or select text to leave a note, or write a message below.</p>
+  {{end}}
+  {{if .Transcript}}
+  <div class="chat">
+    {{range .Transcript}}
+    {{if eq .Role "agent"}}
+    <div class="bubble agent">
+      <div class="bubble-meta"><span class="who">Agent</span></div>
+      <p class="bubble-text">{{.Text}}</p>
+    </div>
+    {{else}}
+    <div class="bubble user">
+      {{if .Anchor}}<div class="bubble-meta">{{template "anchor" .Anchor}}</div>{{end}}
+      {{if .Text}}<p class="bubble-text">{{.Text}}</p>{{end}}
+    </div>
+    {{end}}
+    {{end}}
+  </div>
+  {{end}}
+  {{if .Queue}}
+  <div class="chat queued">
+    {{range .Queue}}
+    <div class="bubble user queued-bubble" data-id="{{.ID}}">
+      <div class="bubble-meta">
+        <span class="badge">Queued</span>
+        {{template "anchor" .Anchor}}
+        <button type="button" class="remove" data-remove="{{.ID}}" aria-label="Remove queued note">×</button>
+      </div>
+      {{if .Prompt}}<p class="bubble-text">{{.Prompt}}</p>{{end}}
+    </div>
+    {{end}}
+  </div>
+  {{end}}
+</div>{{end}}

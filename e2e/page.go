@@ -4,8 +4,10 @@ package e2e
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -39,10 +41,18 @@ func (b *Browser) NewPage(t testing.TB) *Page {
 	ctx, cancel := context.WithTimeout(context.Background(), DefaultTimeout)
 	defer cancel()
 
+	// Use the tab Chrome opened at launch when it is still free, so no
+	// second renderer has to start.
 	var created struct {
 		TargetID string `json:"targetId"`
 	}
-	if err := b.call(ctx, "", "Target.createTarget", map[string]any{"url": "about:blank"}, &created); err != nil {
+	b.mu.Lock()
+	initial := b.initialTarget
+	b.initialTarget = ""
+	b.mu.Unlock()
+	if initial != "" {
+		created.TargetID = initial
+	} else if err := b.call(ctx, "", "Target.createTarget", map[string]any{"url": "about:blank"}, &created); err != nil {
 		t.Fatal(err)
 	}
 	var attached struct {
@@ -276,6 +286,10 @@ func (p *Page) Rect(selector string) Rect {
 // contains urlPart, translated into the top-level viewport.
 func (p *Page) RectInFrame(urlPart, selector string) Rect {
 	p.t.Helper()
+	// Every caller is about to send input there, and Chrome drops input
+	// aimed at an out-of-process frame that has not painted yet: wait for
+	// two of its animation frames first.
+	p.EvalInFrame(urlPart, "new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))", nil)
 	var inner Rect
 	p.EvalInFrame(urlPart, rectExpression(selector), &inner)
 
@@ -319,8 +333,13 @@ func (p *Page) ClickAt(x, y float64, modifiers int) {
 	p.t.Helper()
 	ctx, cancel := p.ctx()
 	defer cancel()
+	if err := p.b.call(ctx, p.sessionID, "Input.dispatchMouseEvent", map[string]any{"type": "mouseMoved", "x": x, "y": y, "modifiers": modifiers}, nil); err != nil {
+		p.t.Fatal(err)
+	}
+	// Input aimed at another frame is routed asynchronously; like a real
+	// pointer, arrive before pressing.
+	time.Sleep(50 * time.Millisecond)
 	for _, ev := range []map[string]any{
-		{"type": "mouseMoved", "x": x, "y": y, "modifiers": modifiers},
 		{"type": "mousePressed", "x": x, "y": y, "button": "left", "clickCount": 1, "modifiers": modifiers},
 		{"type": "mouseReleased", "x": x, "y": y, "button": "left", "clickCount": 1, "modifiers": modifiers},
 	} {
@@ -361,5 +380,143 @@ func (p *Page) WaitFor(expression string) {
 			p.t.Fatalf("timed out waiting for %s", expression)
 		}
 		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// InsertText types text into the focused element, as an input method would.
+func (p *Page) InsertText(text string) {
+	p.t.Helper()
+	ctx, cancel := p.ctx()
+	defer cancel()
+	if err := p.b.call(ctx, p.sessionID, "Input.insertText", map[string]any{"text": text}, nil); err != nil {
+		p.t.Fatal(err)
+	}
+}
+
+// Modifier bits for key and mouse events.
+const (
+	ModAlt   = 1
+	ModCtrl  = 2
+	ModMeta  = 4
+	ModShift = 8
+)
+
+var keyCodes = map[string]struct {
+	code string
+	vk   int
+	text string
+}{
+	"Enter":  {"Enter", 13, "\r"},
+	"Escape": {"Escape", 27, ""},
+	"i":      {"KeyI", 73, "i"},
+}
+
+// Press sends a key down and up to the focused element.
+func (p *Page) Press(key string, modifiers int) {
+	p.t.Helper()
+	k, ok := keyCodes[key]
+	if !ok {
+		p.t.Fatalf("Press: unknown key %q", key)
+	}
+	ctx, cancel := p.ctx()
+	defer cancel()
+	down := map[string]any{"type": "keyDown", "key": key, "code": k.code, "windowsVirtualKeyCode": k.vk, "modifiers": modifiers}
+	if k.text != "" && modifiers&(ModCtrl|ModMeta|ModAlt) == 0 {
+		down["type"] = "keyDown"
+		down["text"] = k.text
+	} else {
+		down["type"] = "rawKeyDown"
+	}
+	for _, ev := range []map[string]any{down, {"type": "keyUp", "key": key, "code": k.code, "windowsVirtualKeyCode": k.vk, "modifiers": modifiers}} {
+		if err := p.b.call(ctx, p.sessionID, "Input.dispatchKeyEvent", ev, nil); err != nil {
+			p.t.Fatal(err)
+		}
+	}
+}
+
+// Drag presses the mouse at one point and releases it at another, which
+// selects text the way a reviewer does.
+func (p *Page) Drag(x1, y1, x2, y2 float64) {
+	p.t.Helper()
+	ctx, cancel := p.ctx()
+	defer cancel()
+	if err := p.b.call(ctx, p.sessionID, "Input.dispatchMouseEvent", map[string]any{"type": "mouseMoved", "x": x1, "y": y1}, nil); err != nil {
+		p.t.Fatal(err)
+	}
+	time.Sleep(50 * time.Millisecond) // arrive before pressing, as in ClickAt
+	events := []map[string]any{
+		{"type": "mousePressed", "x": x1, "y": y1, "button": "left", "buttons": 1, "clickCount": 1},
+	}
+	for i := 1; i <= 5; i++ {
+		f := float64(i) / 5
+		events = append(events, map[string]any{"type": "mouseMoved", "x": x1 + (x2-x1)*f, "y": y1 + (y2-y1)*f, "button": "left", "buttons": 1})
+	}
+	events = append(events, map[string]any{"type": "mouseReleased", "x": x2, "y": y2, "button": "left", "clickCount": 1})
+	for _, ev := range events {
+		if err := p.b.call(ctx, p.sessionID, "Input.dispatchMouseEvent", ev, nil); err != nil {
+			p.t.Fatal(err)
+		}
+	}
+}
+
+// WaitInFrame polls an expression in the frame whose URL contains urlPart
+// until it is truthy.
+func (p *Page) WaitInFrame(urlPart, expression string) {
+	p.t.Helper()
+	deadline := time.Now().Add(DefaultTimeout)
+	for {
+		var ok bool
+		session, contextID, err := p.frameContext(urlPart)
+		if err == nil {
+			err = p.eval(session, contextID, "!!("+expression+")", &ok)
+		}
+		if err == nil && ok {
+			return
+		}
+		if time.Now().After(deadline) {
+			p.t.Fatalf("timed out waiting in frame %s for %s (last error: %v)", urlPart, expression, err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// Screenshot saves a PNG of the viewport.
+func (p *Page) Screenshot(path string) {
+	p.t.Helper()
+	ctx, cancel := p.ctx()
+	defer cancel()
+	var shot struct {
+		Data string `json:"data"`
+	}
+	if err := p.b.call(ctx, p.sessionID, "Page.captureScreenshot", map[string]any{"format": "png"}, &shot); err != nil {
+		p.t.Fatal(err)
+	}
+	data, err := base64.StdEncoding.DecodeString(shot.Data)
+	if err != nil {
+		p.t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		p.t.Fatal(err)
+	}
+}
+
+// SetViewport resizes the page's viewport (CSS pixels).
+func (p *Page) SetViewport(width, height int, dark bool) {
+	p.t.Helper()
+	ctx, cancel := p.ctx()
+	defer cancel()
+	if err := p.b.call(ctx, p.sessionID, "Emulation.setDeviceMetricsOverride", map[string]any{
+		"width": width, "height": height, "deviceScaleFactor": 1, "mobile": width < 600,
+	}, nil); err != nil {
+		p.t.Fatal(err)
+	}
+	scheme := "light"
+	if dark {
+		scheme = "dark"
+	}
+	if err := p.b.call(ctx, p.sessionID, "Emulation.setEmulatedMedia", map[string]any{
+		"features": []map[string]string{{"name": "prefers-color-scheme", "value": scheme}},
+	}, nil); err != nil {
+		p.t.Fatal(err)
 	}
 }

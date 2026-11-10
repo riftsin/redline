@@ -1,0 +1,77 @@
+{{define "review"}}{{template "head" (printf "%s · redline" .Name)}}
+<body>
+<div id="review" class="review{{if .Ended}} is-ended{{end}}" data-key="{{.Key}}" data-revision="{{.Revision}}" data-artifact="{{.ArtifactPath}}">
+  <header class="topbar review-topbar">
+    <a href="/" class="brand" aria-label="redline home">redline</a>
+    <span class="file-name" title="{{.File}}">{{.Name}}</span>
+    <div class="topbar-actions">
+      <div class="mode-toggle" role="group" aria-label="Interaction mode">
+        <button type="button" class="mode active" data-mode="annotate" title="Annotate: click elements or select text to leave notes (⌘I / Ctrl+I)">Annotate</button>
+        <button type="button" class="mode" data-mode="explore" title="Explore: use the page normally (⌘I / Ctrl+I)">Explore</button>
+      </div>
+      {{template "presence" .}}
+      <div class="menu">
+        <button type="button" class="icon-button" id="menu-button" aria-label="More actions" aria-haspopup="menu" aria-expanded="false">
+          <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="3" cy="8" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="13" cy="8" r="1.5"/></svg>
+        </button>
+        <div class="menu-items" id="menu" role="menu" hidden>
+          <button type="button" role="menuitem" data-action="copy-path">Copy file path</button>
+          <button type="button" role="menuitem" data-action="reload">Reload artifact</button>
+          <button type="button" role="menuitem" class="danger" data-action="end" data-live="end">End session</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <div class="review-body">
+    <div class="frame">
+      <iframe id="artifact" title="Artifact: {{.Name}}" sandbox="{{.Sandbox}}" src="{{.FrameSrc}}"></iframe>
+    </div>
+
+    <div id="sheet-scrim" class="sheet-scrim" aria-hidden="true"></div>
+
+    <aside id="panel" class="panel" aria-label="Conversation">
+      <button type="button" id="sheet-dock" class="sheet-dock" aria-controls="panel" aria-expanded="false">
+        <span class="sheet-handle" aria-hidden="true"></span>
+        <span class="dock-row">
+          <span class="dock-title">Conversation</span>
+          {{template "dock-summary" .}}
+          <span class="dock-unread" aria-label="New reply"></span>
+          <svg class="dock-chevron" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 10l4-4 4 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </span>
+      </button>
+      <div class="panel-head"><h2>Conversation</h2></div>
+      {{template "ended-banner" .}}
+      <div id="panel-scroll" class="panel-scroll">
+        {{template "conversation" .}}
+      </div>
+
+      <form id="annotation-card" class="card annotation-card" hidden>
+        <div class="card-head">
+          <span class="card-title" id="card-title"></span>
+          <span class="card-excerpt" id="card-excerpt"></span>
+        </div>
+        <textarea id="annotation-note" rows="3" placeholder="What should change here?" aria-label="Note"></textarea>
+        <div class="card-actions">
+          <span class="hint" id="card-hint" title="Enter queues the note; Ctrl+Enter queues it and sends everything">Ctrl+↵ also sends</span>
+          <button type="button" class="button ghost" id="card-cancel">Cancel</button>
+          <button type="submit" class="button">Queue note</button>
+        </div>
+      </form>
+
+      <form id="composer" class="composer">
+        {{template "agent-banner" .}}
+        <textarea id="composer-input" rows="3" placeholder="Write a message for the agent…" aria-label="Message for the agent"></textarea>
+        <p class="form-error" id="composer-error" role="alert" hidden></p>
+        <div class="composer-actions">
+          <button type="button" class="button danger-outline" id="send-end" title="Send queued notes and end the review">Send &amp; End</button>
+          <button type="submit" class="button primary" id="send">Send to Agent</button>
+        </div>
+      </form>
+    </aside>
+  </div>
+</div>
+<script src="/static/app.js" defer></script>
+</body>
+</html>
+{{end}}

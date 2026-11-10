@@ -1,0 +1,37 @@
+{{define "head"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>{{.}}</title>
+<link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+{{end}}
+
+{{define "home"}}{{template "head" "redline"}}
+<body>
+<header class="topbar">
+  <a href="/" class="brand">redline</a>
+</header>
+<main class="page home">
+  <h1>Review sessions</h1>
+  {{if .Sessions}}
+  <ul class="session-list">
+    {{range .Sessions}}
+    <li>
+      <a class="session-link" href="/session/{{.Key}}">
+        <span class="session-name">{{.Name}}</span>
+        <span class="session-path">{{.File}}</span>
+      </a>
+      <span class="presence presence-{{.Presence.State}}">{{presenceLabel .Presence false}}</span>
+    </li>
+    {{end}}
+  </ul>
+  {{else}}
+  <p class="muted">No open sessions. An agent starts one with <code>redline &lt;file.html&gt;</code>.</p>
+  {{end}}
+</main>
+</body>
+</html>
+{{end}}

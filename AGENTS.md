@@ -29,7 +29,10 @@ Run `scripts/check.sh` and the e2e tests before pushing.
 - The review page is rendered on the server with `html/template`; changed regions are pushed over SSE
   and swapped in by `web/app.js`. The composer and open note card are never re-rendered.
 - The SDK injected into the artifact is a sensor: it reports browser facts through one `postMessage`
-  channel and never owns state.
+  channel and never owns state. The artifact can load before `app.js` runs, so `app.js` sends
+  `hello` on start and the SDK answers with `ready` again; never rely on seeing the first `ready`.
+- Every state change goes through `review.Manager` (`internal/review/ops.go`), which publishes it on
+  the bus; review pages and polls only react to bus events and re-read state.
 - The artifact is served byte-for-byte plus one `<script>` tag, in a sandboxed iframe, with the CSP
   `sandbox` header. A served artifact must never differ from the file on disk in any other way.
 
@@ -37,7 +40,8 @@ Run `scripts/check.sh` and the e2e tests before pushing.
 
 - Bug fixes start with a failing test that reproduces the bug as a user would hit it, end-to-end when
   the bug is user-visible.
-- e2e tests live in `e2e/` behind the `e2e` build tag. Real clicks inside the sandboxed artifact frame
-  go through `Page.ClickInFrame`; Chrome runs sandboxed iframes out of process, which the harness
-  handles.
+- e2e tests live in `e2e/` behind the `e2e` build tag. Real input inside the sandboxed artifact frame
+  goes through `Page.ClickInFrame` / `RectInFrame`, which wait for the out-of-process frame to paint
+  (Chrome drops input aimed at an unpainted frame). Wait for state with `WaitFor`, never fixed sleeps,
+  except to let a CSS transition settle before clicking a moving element.
 - Tests that start a server set `REDLINE_STATE_DIR` to a temp dir and use an ephemeral port.

@@ -6,6 +6,7 @@
 package e2e
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -34,6 +35,9 @@ type Browser struct {
 	listeners []func(cdpMessage)
 	closed    chan struct{}
 	readErr   error
+
+	// initialTarget is the tab Chrome opened at launch, until a page takes it.
+	initialTarget string
 }
 
 type cdpMessage struct {
@@ -111,10 +115,28 @@ func Launch(t testing.TB) *Browser {
 		"--user-data-dir=" + profile,
 		"--no-first-run",
 		"--no-default-browser-check",
+		"--window-size=1280,800",
+		// Keep a fresh profile from doing first-run work that can stall the
+		// DevTools connection: keychain access, background services, and
+		// throttling of pages it considers hidden.
+		"--use-mock-keychain",
+		"--password-store=basic",
 		"--disable-background-networking",
 		"--disable-component-update",
 		"--disable-sync",
-		"--window-size=1280,800",
+		"--disable-default-apps",
+		"--disable-extensions",
+		"--disable-breakpad",
+		"--disable-client-side-phishing-detection",
+		"--disable-domain-reliability",
+		"--disable-hang-monitor",
+		"--disable-background-timer-throttling",
+		"--disable-backgrounding-occluded-windows",
+		"--disable-renderer-backgrounding",
+		"--disable-ipc-flooding-protection",
+		"--metrics-recording-only",
+		"--no-service-autorun",
+		"--force-color-profile=srgb",
 	}
 	if os.Getenv("CI") != "" && runtime.GOOS == "linux" {
 		// GitHub's Ubuntu runners restrict unprivileged user namespaces, which
@@ -124,8 +146,9 @@ func Launch(t testing.TB) *Browser {
 	args = append(args, "about:blank")
 
 	cmd := exec.Command(chrome, args...)
+	chromeLog := &bytes.Buffer{}
 	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
+	cmd.Stderr = &lockedWriter{w: chromeLog}
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start chrome: %v", err)
 	}
@@ -150,7 +173,30 @@ func Launch(t testing.TB) *Browser {
 		closed:  make(chan struct{}),
 	}
 	go b.readLoop()
-	t.Cleanup(b.close)
+	t.Cleanup(func() {
+		b.close()
+		if t.Failed() {
+			t.Logf("chrome output:\n%s", chromeLog.String())
+		}
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), DefaultTimeout)
+	defer cancel()
+	var targets struct {
+		TargetInfos []struct {
+			TargetID string `json:"targetId"`
+			Type     string `json:"type"`
+		} `json:"targetInfos"`
+	}
+	if err := b.call(ctx, "", "Target.getTargets", nil, &targets); err != nil {
+		t.Fatal(err)
+	}
+	for _, ti := range targets.TargetInfos {
+		if ti.Type == "page" {
+			b.initialTarget = ti.TargetID
+			break
+		}
+	}
 	return b
 }
 
@@ -170,10 +216,24 @@ func waitForDevToolsURL(profile string, timeout time.Duration) (string, error) {
 	return "", errors.New("chrome did not report a DevTools port")
 }
 
+// close asks Chrome to quit so it takes its helper processes with it, and
+// kills it only if it does not exit in time.
 func (b *Browser) close() {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	_ = b.call(ctx, "", "Browser.close", nil, nil)
+	cancel()
+	exited := make(chan struct{})
+	go func() {
+		_ = b.cmd.Wait()
+		close(exited)
+	}()
+	select {
+	case <-exited:
+	case <-time.After(5 * time.Second):
+		_ = b.cmd.Process.Kill()
+		<-exited
+	}
 	_ = b.ws.Close()
-	_ = b.cmd.Process.Kill()
-	_ = b.cmd.Wait()
 }
 
 func (b *Browser) readLoop() {
@@ -249,6 +309,12 @@ func (b *Browser) call(ctx context.Context, sessionID, method string, params any
 	case <-b.closed:
 		return fmt.Errorf("%s: browser connection closed: %v", method, b.readErr)
 	case <-ctx.Done():
+		// A DevTools call that never answers has been hard to explain;
+		// keep every goroutine's stack to show whether the read loop or
+		// Chrome is stuck.
+		buf := make([]byte, 1<<20)
+		n := runtime.Stack(buf, true)
+		fmt.Fprintf(os.Stderr, "e2e: %s got no answer; goroutines:\n%s\n", method, buf[:n])
 		b.mu.Lock()
 		delete(b.pending, id)
 		b.mu.Unlock()
@@ -291,4 +357,16 @@ func (b *Browser) await(ctx context.Context, w *eventWaiter) (json.RawMessage, e
 		b.mu.Unlock()
 		return nil, fmt.Errorf("waiting for %s: %w", w.method, ctx.Err())
 	}
+}
+
+// lockedWriter serializes writes from Chrome's output pipe.
+type lockedWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (l *lockedWriter) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(p)
 }
