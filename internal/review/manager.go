@@ -4,11 +4,13 @@ import (
 	"context"
 	"log"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/riftsin/redline/internal/artifact"
 	"github.com/riftsin/redline/internal/store"
 	"github.com/riftsin/redline/internal/watch"
 )
@@ -75,6 +77,7 @@ type live struct {
 	reviewers int
 	grace     *time.Timer
 	stopWatch func()
+	stopTree  func() // set while the artifact opts into folder live reload
 
 	// The artifact's HTML at the latest and the previous revision, so a
 	// review page can measure what the agent changed.
@@ -105,6 +108,9 @@ func (m *Manager) Close() {
 		if l.stopWatch != nil {
 			l.stopWatch()
 		}
+		if l.stopTree != nil {
+			l.stopTree()
+		}
 		if l.grace != nil {
 			l.grace.Stop()
 		}
@@ -127,7 +133,22 @@ func (m *Manager) ensure(key, file string) *live {
 	}
 	l.stopWatch = watch.File(file, func() { m.artifactChanged(key) })
 	m.sessions[key] = l
+	m.syncTreeWatch(l, []byte(l.sources.Current))
 	return l
+}
+
+// syncTreeWatch starts or stops watching the artifact's folder, following
+// its live-reload opt-in. m.mu must be held.
+func (m *Manager) syncTreeWatch(l *live, html []byte) {
+	want := artifact.WantsFolderReload(html)
+	switch {
+	case want && l.stopTree == nil:
+		key := l.key
+		l.stopTree = watch.Tree(filepath.Dir(l.file), l.file, func() { m.artifactChanged(key) })
+	case !want && l.stopTree != nil:
+		l.stopTree()
+		l.stopTree = nil
+	}
 }
 
 // Track makes sure the session's live state (and file watcher) exists.
@@ -148,6 +169,7 @@ func (m *Manager) artifactChanged(key string) {
 	m.mu.Lock()
 	if l := m.sessions[key]; l != nil {
 		l.sources = Sources{Revision: sess.ArtifactRevision, Previous: l.sources.Current, Current: string(html)}
+		m.syncTreeWatch(l, html)
 	}
 	m.mu.Unlock()
 

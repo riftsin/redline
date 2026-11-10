@@ -2,13 +2,14 @@
 <body>
 <div id="review" class="review{{if .Ended}} is-ended{{end}}" data-key="{{.Key}}" data-revision="{{.Revision}}" data-artifact="{{.ArtifactPath}}" data-max-images="{{.MaxImages}}">
   <header class="topbar review-topbar">
-    <a href="/" class="brand" aria-label="redline home">redline</a>
+    <a href="/" class="brand" aria-label="redline home"><span class="brand-name">redline</span></a>
     <span class="file-name" title="{{.File}}">{{.Name}}</span>
     <div class="topbar-actions">
       <div class="mode-toggle" role="group" aria-label="Interaction mode">
         <button type="button" class="mode active" data-mode="annotate" title="Annotate: click elements or select text to leave notes (⌘I / Ctrl+I)">Annotate</button>
         <button type="button" class="mode" data-mode="explore" title="Explore: use the page normally (⌘I / Ctrl+I)">Explore</button>
       </div>
+      {{template "layout" .}}
       <button type="button" class="changes" id="changes-chip" hidden title="Show what the agent changed in the latest save"><span class="changes-dot" aria-hidden="true"></span><span id="changes-label"></span></button>
       {{template "presence" .}}
       <button type="button" class="icon-button sidebar-toggle" id="sidebar-toggle" aria-controls="panel" aria-expanded="true" title="Hide the conversation">

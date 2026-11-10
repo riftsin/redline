@@ -60,3 +60,44 @@
   </div>
   {{end}}
 </div>{{end}}
+
+{{define "layout"}}<div id="layout" class="layout-inbox" data-active="{{len .LayoutActive}}">
+  <button type="button" class="layout-button" id="layout-button" aria-controls="layout-drawer" aria-expanded="false" title="Layout issues the browser found in the artifact"{{if not .LayoutActive}} hidden{{end}}>
+    <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.8 15 14H1z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M8 6.2v3.6M8 11.6v.4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+    <span class="layout-label">Layout issues</span><span class="layout-count">{{len .LayoutActive}}</span>
+  </button>
+  <div class="layout-drawer" id="layout-drawer" role="dialog" aria-label="Layout issues">
+    <div class="layout-head">
+      <h2>Layout issues</h2>
+      {{if .LayoutActive}}<label class="layout-all"><input type="checkbox" data-layout-all> Select all</label>{{end}}
+    </div>
+    {{if not .LayoutActive}}<p class="layout-empty">No unresolved layout issues.</p>{{end}}
+    <ul class="layout-list">
+      {{range .LayoutActive}}{{template "layout-item" .}}{{end}}
+    </ul>
+    {{if .LayoutClosed}}
+    <details class="layout-closed"><summary>Recently closed ({{len .LayoutClosed}})</summary>
+      <ul class="layout-list">{{range .LayoutClosed}}{{template "layout-item" .}}{{end}}</ul>
+    </details>
+    {{end}}
+    {{if .LayoutActive}}
+    <div class="layout-foot">
+      <span class="layout-note">Detection never interrupts your agent; queued fixes are sent with your next Send.</span>
+      <button type="button" class="button primary" data-layout-queue disabled>Queue selected fixes</button>
+    </div>
+    {{end}}
+  </div>
+</div>{{end}}
+
+{{define "layout-item"}}<li class="layout-item status-{{.Status}}" data-layout-id="{{.ID}}">
+  {{if .Selectable}}<input type="checkbox" class="layout-check" value="{{.ID}}" aria-label="Select {{.Title}}">{{else}}<span class="layout-check-spacer"></span>{{end}}
+  <div class="layout-body">
+    <div class="layout-title"><span class="severity" title="Severe">●</span> {{.Title}} <span class="layout-status">{{.StatusLabel}}</span></div>
+    <p class="layout-explain">{{.Explanation}}</p>
+    <p class="layout-meta">{{.Viewport}} · {{.ViewportWidth}}px{{if .Component}} · <code>{{.Component}}</code>{{end}}{{if .LastSeen}} · seen {{.LastSeen}}{{end}}</p>
+    <div class="layout-actions">
+      {{if .Selector}}<button type="button" class="link-button" data-layout-reveal="{{.Selector}}">Reveal</button>{{end}}
+      {{if .Selectable}}<button type="button" class="link-button" data-layout-dismiss="{{.ID}}" title="Hide for this version of the artifact">Dismiss</button>{{end}}
+    </div>
+  </div>
+</li>{{end}}

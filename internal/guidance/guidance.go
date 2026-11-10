@@ -299,7 +299,7 @@ func Home(sessions []Session, agent Agent) string {
 	for _, h := range []string{
 		"Run `redline <html-file>` to open or resume a review session. If the user explicitly ended the session from the browser, this refuses to reopen it and explains why instead of reopening uninvited - pass `--reopen` only when the user asks for further review or something important needs their visual attention.",
 		"Unless the user specifies another location, create HTML artifacts in the current working directory under `.redline/`.",
-		"redline serves the HTML file through a local server. If your HTML needs other local files such as images, CSS, fonts, and scripts, copy them into the same directory as the HTML file and reference them with relative paths from that directory. Never prepend `/` to those asset paths - root paths won't resolve.",
+		"redline serves the HTML file through a local server. If your HTML needs other local files such as images, CSS, fonts, and scripts, copy them into the same directory as the HTML file and reference them with relative paths from that directory. Never prepend `/` to those asset paths - root paths won't resolve. The page live-reloads when the HTML file changes; to also reload when those sibling files change, add `data-redline-live-reload-root` to `<html>`.",
 		"Run `redline poll <html-file>` to wait for user feedback. It long-polls and stays silent until the user sends feedback, ends the session, or leaves every review window disconnected past the reconnect grace period, so leave it running - never kill it. The only response that arrives without a user action is a fatal artifact failure, which means the review surface itself could not be used. " + PollExecution(agent) + " " + SendAndEndRule,
 		"Run `redline reply <html-file> --agent-reply \"<message>\"` to show a concise reply and exit once redline accepts it, when you are handing a result back and are not about to long-poll. The review page stops showing Working only after this command exits 0. Use `redline poll <html-file> --agent-reply \"<message>\"` when that reply should be followed by another wait for feedback. A longer reply uses `--agent-reply-file <path>` (`-` reads stdin) on either command.",
 		"Run `redline end <html-file>` to end a session as the agent - ending it this way still allows a plain reopen later. When the user ends it from the browser instead, a later `redline <html-file>` refuses to reopen it without `--reopen`.",
@@ -438,6 +438,9 @@ func UserEndedOpenNextStep(file string) string {
 
 // Failure is a fatal artifact failure, for next-step texts.
 type Failure struct{ Kind, Detail string }
+
+// LayoutNote prefixes the next step when the user queued layout fixes.
+const LayoutNote = "This feedback includes layout issues the user selected from the review page's Layout issues inbox: the listed ids and targets are what the browser proved. Apply every listed fix in one pass before saving so the review refreshes once. Queueing is a repair request, not a resolution - redline only marks an issue resolved after a newer artifact revision and a complete check at the same viewport no longer detects it. "
 
 const imageNote = "Some notes carry images the user attached: each `image:` line is an absolute local file path. Open those image files to see what the user is referring to. "
 

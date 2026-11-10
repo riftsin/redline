@@ -313,24 +313,24 @@ func (r Rect) Center() (float64, float64) {
 	return r.X + r.Width/2, r.Y + r.Height/2
 }
 
-// Rect returns selector's bounding box in the top-level viewport.
+// Rect returns selector's bounding box in the top-level viewport, once it
+// is settled.
 func (p *Page) Rect(selector string) Rect {
 	p.t.Helper()
+	p.Eval(settleScript(selector), nil)
 	var r Rect
 	p.Eval(rectExpression(selector), &r)
 	return r
 }
 
-// RectInFrame returns selector's bounding box, inside the frame whose URL
-// contains urlPart, translated into the top-level viewport.
-func (p *Page) RectInFrame(urlPart, selector string) Rect {
-	p.t.Helper()
-	// Every caller is about to send input there. Like a person, bring the
-	// element into view and wait until it stops moving (smooth scrolling,
-	// a sheet sliding); this also waits for the out-of-process frame to
-	// paint, without which Chrome drops the input.
+// settleScript brings selector's element into view and resolves once it has
+// stopped moving for a few frames (smooth scrolling, a sliding sheet, a
+// region the server just re-rendered). Input aimed at something Chrome has
+// not painted yet is dropped or lands elsewhere, so every click waits for it,
+// as a person's would.
+func settleScript(selector string) string {
 	sel, _ := json.Marshal(selector)
-	p.EvalInFrame(urlPart, fmt.Sprintf(`(async () => {
+	return fmt.Sprintf(`(async () => {
 		const el = document.querySelector(%s);
 		if (!el) return;
 		const r0 = el.getBoundingClientRect();
@@ -344,7 +344,15 @@ func (p *Page) RectInFrame(urlPart, selector string) Rect {
 			stable = now === last ? stable + 1 : 0;
 			last = now;
 		}
-	})()`, sel), nil)
+	})()`, sel)
+}
+
+// RectInFrame returns selector's bounding box, inside the frame whose URL
+// contains urlPart, translated into the top-level viewport, once it is
+// settled.
+func (p *Page) RectInFrame(urlPart, selector string) Rect {
+	p.t.Helper()
+	p.EvalInFrame(urlPart, settleScript(selector), nil)
 	var inner Rect
 	p.EvalInFrame(urlPart, rectExpression(selector), &inner)
 

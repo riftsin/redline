@@ -301,11 +301,16 @@ func pollOutput(e *env, file string, status int, pr server.PollResponse) (string
 		for i, f := range pr.ArtifactFailures {
 			failures[i] = guidance.Failure{Kind: f.Kind, Detail: f.Detail}
 		}
-		images := false
+		images, layoutFixes := false, false
 		for _, p := range pr.Prompts {
 			images = images || len(p.Attachments) > 0
+			layoutFixes = layoutFixes || p.Kind == "layout"
 		}
-		b.WriteString("\nNext: " + guidance.FeedbackNextStep(file, failures, pr.SessionEnded, pr.EndedBy, images, e.agent) + "\n")
+		next := guidance.FeedbackNextStep(file, failures, pr.SessionEnded, pr.EndedBy, images, e.agent)
+		if layoutFixes {
+			next = guidance.LayoutNote + next
+		}
+		b.WriteString("\nNext: " + next + "\n")
 		if pr.DOMSnapshot != "" {
 			b.WriteString("\nPage outline when the user sent this:\n")
 			for _, line := range strings.Split(pr.DOMSnapshot, "\n") {
@@ -379,6 +384,9 @@ func promptHeading(p store.Prompt) string {
 		Text        string `json:"text"`
 		RowLabel    string `json:"rowLabel"`
 		ColumnLabel string `json:"columnLabel"`
+		NodeID      string `json:"nodeId"`
+		Label       string `json:"label"`
+		DiagramID   string `json:"diagramId"`
 	}
 	if len(p.Target) > 0 {
 		_ = json.Unmarshal(p.Target, &target)
@@ -393,6 +401,21 @@ func promptHeading(p store.Prompt) string {
 	switch {
 	case p.Kind == "message":
 		return "Message"
+	case p.Kind == "layout":
+		return "Layout issues the user asked you to fix (" + p.Text + ")"
+	case target.Type == "mermaid-node":
+		h := "On diagram node"
+		if target.Label != "" {
+			h += " " + quote(target.Label)
+		}
+		if target.NodeID != "" {
+			h += " (node id " + target.NodeID
+			if target.DiagramID != "" {
+				h += " in " + target.DiagramID
+			}
+			h += ")"
+		}
+		return h
 	case target.Type == "text-range":
 		text := target.Text
 		if text == "" {

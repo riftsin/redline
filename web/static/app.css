@@ -1021,6 +1021,211 @@ textarea:disabled {
   outline-offset: -4px;
 }
 
+/* Layout issues inbox */
+
+.layout-inbox {
+  position: relative;
+}
+
+.layout-button {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
+  color: var(--warn);
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.layout-count {
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--warn);
+  color: var(--surface);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+}
+
+.layout-drawer {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  display: none;
+  width: min(420px, calc(100vw - 24px));
+  max-height: min(70vh, 620px);
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.review.layout-open .layout-drawer {
+  display: block;
+}
+
+.layout-head {
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-4) var(--space-2);
+  background: var(--surface);
+}
+
+.layout-head h2 {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.layout-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.layout-empty {
+  margin: 0;
+  padding: var(--space-2) var(--space-4) var(--space-4);
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.layout-list {
+  margin: 0;
+  padding: 0 var(--space-2);
+  list-style: none;
+}
+
+.layout-item {
+  display: flex;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border-radius: 6px;
+}
+
+.layout-item + .layout-item {
+  border-top: 1px solid var(--border);
+}
+
+.layout-check,
+.layout-check-spacer {
+  flex: none;
+  align-self: flex-start;
+  width: 16px;
+  height: 16px;
+  margin: 3px 0 0;
+}
+
+.layout-body {
+  min-width: 0;
+}
+
+.layout-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.severity {
+  color: var(--danger);
+  font-size: 10px;
+  vertical-align: 2px;
+}
+
+.layout-status {
+  margin-left: 4px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.status-queued .layout-status,
+.status-recurring .layout-status,
+.status-reopened .layout-status {
+  border-color: var(--accent-line);
+  color: var(--accent);
+}
+
+.layout-explain,
+.layout-meta {
+  margin: 2px 0 0;
+  font-size: 13px;
+}
+
+.layout-meta {
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.layout-actions {
+  display: flex;
+  gap: var(--space-3);
+  margin-top: 4px;
+}
+
+.link-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.layout-closed {
+  margin: var(--space-2) var(--space-2) 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.layout-closed summary {
+  padding: var(--space-1) var(--space-2);
+  cursor: pointer;
+}
+
+.layout-closed .layout-item {
+  opacity: 0.75;
+}
+
+.layout-foot {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.layout-note {
+  flex: 1;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 /* Phone layout: the artifact takes the screen; the conversation is a bottom
    sheet over it, collapsed to a dock. The sheet moves with a transform, never
    a height change, so its contents keep their layout while it slides. */
@@ -1056,6 +1261,24 @@ textarea:disabled {
 
   .review-topbar .changes {
     padding-inline: 8px;
+  }
+
+  .layout-label,
+  .changes-words,
+  .review-topbar .brand-name {
+    display: none;
+  }
+
+  .review-topbar {
+    gap: var(--space-2);
+  }
+
+  .layout-drawer {
+    position: fixed;
+    top: calc(var(--topbar-height) + 6px);
+    right: 12px;
+    left: 12px;
+    width: auto;
   }
 
   .card-actions .button.ghost {

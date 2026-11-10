@@ -125,6 +125,26 @@
     updateSidebarBadge();
   }
 
+  // A region replaced between pointer-down and pointer-up would swallow the
+  // click (it would start and end on different elements), so an update to
+  // the region being pressed waits for the release.
+  let pressed = null;
+  const deferredRegions = new Map();
+  document.addEventListener("pointerdown", (event) => {
+    pressed = event.target;
+  }, true);
+  const release = () => {
+    // After the click that follows the release has been dispatched.
+    setTimeout(() => {
+      pressed = null;
+      const pending = Array.from(deferredRegions.entries());
+      deferredRegions.clear();
+      for (const [id, html] of pending) swapRegion({ id, html });
+    }, 0);
+  };
+  document.addEventListener("pointerup", release, true);
+  document.addEventListener("pointercancel", release, true);
+
   function swapRegion({ id, html }) {
     if (id === "conversation" && state.editing) {
       // Never pull a note out from under the reviewer's cursor.
@@ -133,6 +153,10 @@
     }
     const current = document.getElementById(id);
     if (!current) return;
+    if (pressed && current.contains(pressed)) {
+      deferredRegions.set(id, html);
+      return;
+    }
     const pinned = id === "conversation" && isPinned();
     const template = document.createElement("template");
     template.innerHTML = html.trim();
@@ -141,6 +165,7 @@
     current.replaceWith(replacement);
     if (pinned) panelScroll.scrollTop = panelScroll.scrollHeight;
     if (id === "conversation") noteReplies(replacement);
+    if (id === "layout") restoreLayoutSelection();
   }
 
   // A reply that arrives while the conversation is out of sight marks it.
@@ -260,9 +285,20 @@
     const c = state.changes;
     changesChip.classList.toggle("is-rewrite", c.rewrite);
     changesChip.disabled = c.rewrite;
+    // The number stays visible on a phone; the words may be hidden there.
+    const label = (count, words) => {
+      const n = document.createElement("span");
+      n.className = "changes-count";
+      n.textContent = count;
+      const w = document.createElement("span");
+      w.className = "changes-words";
+      w.textContent = words;
+      changesLabel.replaceChildren(n, w);
+    };
     if (c.rewrite) changesLabel.textContent = "Page rewritten";
-    else if (c.index === 0) changesLabel.textContent = c.selectors.length + (c.selectors.length === 1 ? " change" : " changes");
-    else changesLabel.textContent = "Change " + c.index + " of " + c.selectors.length;
+    else if (c.index === 0) label(String(c.selectors.length), c.selectors.length === 1 ? " change" : " changes");
+    else label(c.index + "/" + c.selectors.length, " changes");
+    changesChip.setAttribute("aria-label", c.rewrite ? "Page rewritten" : c.index === 0 ? c.selectors.length + " changes" : "Change " + c.index + " of " + c.selectors.length);
   }
 
   changesChip.addEventListener("click", () => {
@@ -356,6 +392,17 @@
         break;
       case "meta":
         updateMeta(payload);
+        break;
+      case "layout":
+        // An audit pass of what is on screen. Detection is passive: it only
+        // updates the inbox.
+        api("/layout", {
+          revision: state.shownRevision,
+          complete: Boolean(payload.complete),
+          target_presence_complete: Boolean(payload.targetPresenceComplete),
+          viewport_width: Number(payload.viewportWidth) || 0,
+          findings: Array.isArray(payload.findings) ? payload.findings.slice(0, 200) : [],
+        }).catch(() => {});
         break;
       case "toggle-mode":
         if (!state.ended) setMode(state.mode === "annotate" ? "explore" : "annotate", true);
@@ -508,12 +555,14 @@
     state.pending = target;
     let title = isText ? "Annotate text" : "Annotate <" + (target.tag || "element") + ">";
     const cell = target.target && target.target.type === "table-cell" ? target.target : null;
-    if (cell) {
+    if (target.target && target.target.type === "mermaid-node") {
+      title = "Annotate diagram node" + (target.target.label ? ": " + target.target.label : "");
+    } else if (cell) {
       const labels = [cell.rowLabel, cell.columnLabel].filter((l) => l);
       title = labels.length ? "Annotate cell: " + labels.join(" → ") : "Annotate cell";
     }
     cardTitle.textContent = title;
-    cardExcerpt.textContent = target.text ? "“" + target.text + "”" : "";
+    cardExcerpt.textContent = target.text && !(target.target && target.target.type === "mermaid-node") ? "“" + target.text + "”" : "";
     card.hidden = false;
     if (PHONE.matches) setSheet(true);
     if (root.classList.contains("panel-collapsed")) setPanel(true);
@@ -722,6 +771,84 @@
     if (anchor && anchor.dataset.selector) toFrame("reveal", { selector: anchor.dataset.selector });
   });
 
+  // -- Layout issues inbox ---------------------------------------------------------
+  //
+  // The server renders the drawer; whether it is open and which issues are
+  // selected belong to this tab and survive re-renders.
+
+  const layoutSelected = new Set();
+
+  function setLayoutDrawer(open) {
+    root.classList.toggle("layout-open", open);
+    const button = document.getElementById("layout-button");
+    if (button) button.setAttribute("aria-expanded", String(open));
+  }
+
+  function restoreLayoutSelection() {
+    const box = document.getElementById("layout");
+    const boxes = Array.from(box.querySelectorAll(".layout-check"));
+    const present = new Set(boxes.map((b) => b.value));
+    for (const id of Array.from(layoutSelected)) if (!present.has(id)) layoutSelected.delete(id);
+    for (const b of boxes) b.checked = layoutSelected.has(b.value);
+    const all = box.querySelector("[data-layout-all]");
+    if (all) all.checked = boxes.length > 0 && boxes.every((b) => b.checked);
+    const queue = box.querySelector("[data-layout-queue]");
+    if (queue) {
+      queue.disabled = layoutSelected.size === 0 || state.ended;
+      queue.textContent = layoutSelected.size > 1 ? "Queue " + layoutSelected.size + " fixes" : "Queue selected fixes";
+    }
+    if (box.dataset.active === "0" && box.querySelectorAll(".layout-item").length === 0) setLayoutDrawer(false);
+  }
+
+  root.addEventListener("click", (event) => {
+    const box = document.getElementById("layout");
+    if (event.target.closest("#layout-button")) {
+      setLayoutDrawer(!root.classList.contains("layout-open"));
+      return;
+    }
+    if (!box.contains(event.target)) {
+      if (root.classList.contains("layout-open") && !event.target.closest(".layout-drawer")) setLayoutDrawer(false);
+      return;
+    }
+    const reveal = event.target.closest("[data-layout-reveal]");
+    if (reveal) {
+      toFrame("reveal", { selector: reveal.dataset.layoutReveal });
+      return;
+    }
+    const dismiss = event.target.closest("[data-layout-dismiss]");
+    if (dismiss) {
+      layoutSelected.delete(dismiss.dataset.layoutDismiss);
+      api("/layout/" + encodeURIComponent(dismiss.dataset.layoutDismiss) + "/dismiss").catch((error) => showError(error.message));
+      return;
+    }
+    if (event.target.closest("[data-layout-queue]")) {
+      const ids = Array.from(layoutSelected);
+      if (ids.length === 0) return;
+      api("/layout/queue", { ids })
+        .then(() => {
+          layoutSelected.clear();
+          setLayoutDrawer(false);
+          showError("");
+        })
+        .catch((error) => showError(error.message));
+    }
+  });
+
+  root.addEventListener("change", (event) => {
+    const box = document.getElementById("layout");
+    if (!box.contains(event.target)) return;
+    if (event.target.matches("[data-layout-all]")) {
+      for (const b of box.querySelectorAll(".layout-check")) {
+        if (event.target.checked) layoutSelected.add(b.value);
+        else layoutSelected.delete(b.value);
+      }
+    } else if (event.target.matches(".layout-check")) {
+      if (event.target.checked) layoutSelected.add(event.target.value);
+      else layoutSelected.delete(event.target.value);
+    }
+    restoreLayoutSelection();
+  });
+
   // -- Phone bottom sheet ---------------------------------------------------------
   //
   // Under 860px the conversation is a bottom sheet over the artifact. Its
@@ -873,6 +1000,8 @@
       if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && k === "i") {
         event.preventDefault();
         if (!state.ended) setMode(state.mode === "annotate" ? "explore" : "annotate", true);
+      } else if (event.key === "Escape" && root.classList.contains("layout-open")) {
+        setLayoutDrawer(false);
       } else if (event.key === "Escape" && !menu.hidden) {
         setMenu(false);
       } else if (event.key === "Escape" && sheetOpen()) {

@@ -76,3 +76,38 @@ func TestSameSizeRewriteWithinOneClockTick(t *testing.T) {
 	}
 	waitFor(t, func() bool { return changes.Load() == 1 })
 }
+
+func TestTreeReportsSiblingChanges(t *testing.T) {
+	root := t.TempDir()
+	write := func(rel, content string) {
+		t.Helper()
+		p := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("plan.html", "<p>x</p>")
+	write("css/site.css", "a{}")
+	var changes atomic.Int32
+	stop := Tree(root, filepath.Join(root, "plan.html"), func() { changes.Add(1) })
+	defer stop()
+
+	write("css/site.css", "a{color:red}")
+	waitFor(t, func() bool { return changes.Load() == 1 })
+	write("img/new.png", "png")
+	waitFor(t, func() bool { return changes.Load() == 2 })
+
+	// The artifact itself (watched on its own), hidden files, dependency
+	// folders and exports are ignored.
+	write("plan.html", "<p>changed</p>")
+	write(".cache/x", "1")
+	write("node_modules/lib/x.js", "1")
+	write("plan.export.html", "export")
+	time.Sleep(3 * TreeInterval)
+	if n := changes.Load(); n != 2 {
+		t.Fatalf("ignored files caused %d changes", n-2)
+	}
+}

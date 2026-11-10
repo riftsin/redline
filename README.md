@@ -74,6 +74,9 @@ agent writes artifact.html
 - **Send to Agent** delivers every queued note plus your message, with a compact outline of the
   rendered page. **Send & End** also ends the session; the agent must not reopen it uninvited
   (`redline <file> --reopen` overrides).
+- **Live reload** follows the HTML file. To also reload when stylesheets, images or scripts next to it
+  change, add `data-redline-live-reload-root` to `<html>` or `<meta name="redline-live-reload"
+  content="root">`.
 - **Delivery receipts**: every sent note shows 👀 Seen when the agent's poll takes it, 🛠️ Working
   when the artifact changes after that, and ✅ Done when the agent replies. Before Seen it says why
   (no agent listening, agent busy).
@@ -81,6 +84,17 @@ agent writes artifact.html
   The comparison is between the parsed pages, so reformatting alone never counts. An **N changes**
   chip steps through them, each agent reply links to what it changed, and a wholesale rewrite is
   labelled instead.
+- **Layout issues**: after fonts and finite animations settle, the page checks itself for severe
+  failures it can prove from the rendering: content escaping the page, text clipped by its container,
+  controls cut off or out of reach, text covered by another element. Ellipsis, line clamp,
+  visually-hidden text, intentional scrollers, masks, diagrams and moving elements are left alone.
+  Findings go to a **Layout issues** button in the top bar (hidden while there are none); its drawer
+  lists each issue with its viewport, target and state, with **Reveal** and **Dismiss** (for this
+  version of the artifact). Selected issues become one queued note with **Queue selected fixes**.
+  Detection never wakes the agent; an issue resolves only when a newer version of the artifact passes
+  a complete check at the same viewport. `REDLINE_DIAGNOSTIC_VIEWPORTS` (`mobile,compact,desktop`)
+  limits which viewport classes are tracked.
+- Clicking a node of a rendered Mermaid diagram annotates the node itself (its id and label).
 - Agent replies render a small Markdown subset: paragraphs, headings, lists, code, bold, italic, links.
 - The browser tab takes the artifact's `<title>` and icon; an artifact can update them live with
   `window.redline.setDocumentMeta({ title, icon })`.
@@ -130,6 +144,7 @@ input, 1 otherwise. A CLI newer than the running server replaces it; an older on
 | `REDLINE_ALLOWED_HOSTS` | none | Extra hostnames for the Host allowlist (whitespace-separated, `*` disables it) |
 | `REDLINE_DISCONNECT_GRACE_MS` | 5 minutes | How long a waiting poll survives every review page disconnecting; `0`/`off` never releases it |
 | `REDLINE_NO_OPEN` | none | `1` never opens a browser |
+| `REDLINE_DIAGNOSTIC_VIEWPORTS` | all | Viewport classes the layout inbox tracks (`mobile`, `compact`, `desktop`) |
 | `REDLINE_MAX_ATTACHMENT_BYTES` | 10 MiB | Per image |
 | `REDLINE_ATTACHMENT_TTL_MS` | 7 days | Unused images expire; `0`/`off` disables |
 | `REDLINE_MAX_ATTACHMENT_DISK_MB` | `512` | Image disk budget (old unused images are evicted first); `0`/`off` disables |

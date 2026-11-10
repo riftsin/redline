@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/riftsin/redline/internal/attachments"
+	"github.com/riftsin/redline/internal/layout"
 	"github.com/riftsin/redline/internal/review"
 	"github.com/riftsin/redline/internal/store"
 )
@@ -89,9 +90,10 @@ const (
 	regionAgentBanner  = "agent-banner"
 	regionEndedBanner  = "ended-banner"
 	regionDockSummary  = "dock-summary"
+	regionLayout       = "layout"
 )
 
-var allRegions = []string{regionConversation, regionPresence, regionAgentBanner, regionEndedBanner, regionDockSummary}
+var allRegions = []string{regionConversation, regionPresence, regionAgentBanner, regionEndedBanner, regionDockSummary, regionLayout}
 
 func regionsFor(ev review.EventType) []string {
 	switch ev {
@@ -104,6 +106,8 @@ func regionsFor(ev review.EventType) []string {
 		return []string{regionConversation, regionPresence, regionAgentBanner, regionDockSummary}
 	case review.SessionChanged:
 		return allRegions
+	case review.LayoutChanged:
+		return []string{regionLayout}
 	}
 	return nil
 }
@@ -483,4 +487,64 @@ func (s *Server) recordChange(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "recorded"})
+}
+
+// layoutPass records one audit pass from the review page. It never wakes
+// the agent.
+func (s *Server) layoutPass(w http.ResponseWriter, r *http.Request) {
+	sess, ok := s.session(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Revision               int              `json:"revision"`
+		Complete               bool             `json:"complete"`
+		TargetPresenceComplete bool             `json:"target_presence_complete"`
+		ViewportWidth          int              `json:"viewport_width"`
+		Findings               []layout.Finding `json:"findings"`
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	if body.Revision < 0 || body.Revision > sess.ArtifactRevision || body.ViewportWidth <= 0 {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "bad audit pass")
+		return
+	}
+	err := s.m.ApplyLayoutPass(r.Context(), sess.Key, layout.Pass{
+		Complete: body.Complete, TargetPresenceComplete: body.TargetPresenceComplete, ViewportWidth: body.ViewportWidth,
+		Revision: body.Revision, At: time.Now(), Findings: body.Findings,
+	})
+	if s.actionError(w, err) {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "recorded"})
+}
+
+func (s *Server) layoutQueue(w http.ResponseWriter, r *http.Request) {
+	sess, ok := s.session(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		IDs []string `json:"ids"`
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	n, err := s.m.QueueLayoutFixes(r.Context(), sess.Key, body.IDs)
+	if s.actionError(w, err) {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "queued", "queued": n})
+}
+
+func (s *Server) layoutDismiss(w http.ResponseWriter, r *http.Request) {
+	sess, ok := s.session(w, r)
+	if !ok {
+		return
+	}
+	if s.actionError(w, s.m.DismissLayoutWarning(r.Context(), sess.Key, r.PathValue("id"))) {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "dismissed"})
 }

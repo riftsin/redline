@@ -20,3 +20,18 @@ func TestInjectSDK(t *testing.T) {
 		}
 	}
 }
+
+func TestWantsFolderReload(t *testing.T) {
+	for src, want := range map[string]bool{
+		`<html data-redline-live-reload-root><body>`:                    true,
+		`<head><meta name="redline-live-reload" content="root"></head>`: true,
+		`<meta name="Redline-Live-Reload" content=" ROOT ">`:            true,
+		`<html><body data-redline-live-reload-root>`:                    false,
+		`<!-- <html data-redline-live-reload-root> --><html>`:           false,
+		`<meta name="redline-live-reload" content="file">`:              false,
+	} {
+		if got := WantsFolderReload([]byte(src)); got != want {
+			t.Errorf("WantsFolderReload(%q) = %v, want %v", src, got, want)
+		}
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/riftsin/redline/internal/layout"
 	"github.com/riftsin/redline/internal/markdown"
 	"github.com/riftsin/redline/internal/review"
 	"github.com/riftsin/redline/internal/store"
@@ -98,6 +99,17 @@ type reviewView struct {
 	Transcript   []entryView
 	Queue        []queueView
 	MaxImages    int
+
+	LayoutActive []layoutView // unresolved issues
+	LayoutClosed []layoutView // recently resolved, dismissed or obsolete
+}
+
+// layoutView is one entry of the layout-issues drawer.
+type layoutView struct {
+	ID, Title, Explanation, Status, StatusLabel string
+	Viewport, Selector, Component, LastSeen     string
+	ViewportWidth                               int
+	Selectable, Outstanding                     bool
 }
 
 func (s *Server) images(ctx context.Context, refs []store.AttachmentRef) []imageView {
@@ -207,6 +219,23 @@ func (s *Server) reviewView(ctx context.Context, sess *store.Session) (*reviewVi
 			ev.ChangesJSON = string(b)
 		}
 		v.Transcript = append(v.Transcript, ev)
+	}
+	warnings, err := s.m.Store.LayoutWarnings(ctx, sess.Key)
+	if err != nil {
+		return nil, err
+	}
+	for i := len(warnings) - 1; i >= 0; i-- { // newest first
+		w := warnings[i]
+		lv := layoutView{
+			ID: w.ID, Title: w.Title(), Explanation: w.Explanation(), Status: w.Status, StatusLabel: layout.StatusLabel(w.Status),
+			Viewport: layout.ViewportLabel(w.ViewportClass), ViewportWidth: w.ViewportWidth, Selector: w.Selector,
+			Component: w.Component, LastSeen: stamp(w.LastSeenAt), Selectable: w.Selectable() && !v.Ended, Outstanding: w.Outstanding(),
+		}
+		if w.Active() {
+			v.LayoutActive = append(v.LayoutActive, lv)
+		} else if len(v.LayoutClosed) < 10 {
+			v.LayoutClosed = append(v.LayoutClosed, lv)
+		}
 	}
 	for _, it := range queue {
 		v.Queue = append(v.Queue, queueView{ID: it.ID, Kind: it.Kind, Prompt: it.Prompt, Anchor: store.AnchorFor(it), Attachments: s.images(ctx, it.Attachments)})

@@ -243,3 +243,67 @@ func TestLocalDesignSnippetStylesTheArtifact(t *testing.T) {
 	// DaisyUI styles the button and the Tailwind runtime generates p-6.
 	r.page.WaitInFrame("/artifact/", `document.getElementById('go') && getComputedStyle(document.getElementById('go')).borderRadius !== '0px' && getComputedStyle(document.body).paddingTop === '24px'`)
 }
+
+// An SVG with the markers and structure Mermaid renders (the real library
+// would need the network).
+const mermaidExtra = `<div class="mermaid"><svg id="mermaid-1" aria-roledescription="flowchart-v2" width="320" height="120" viewBox="0 0 320 120">
+<g class="nodes"><g class="node default" id="flowchart-api-1" transform="translate(80,60)">
+<rect x="-70" y="-30" width="140" height="60" fill="#eef"></rect>
+<g class="label"><foreignObject width="120" height="24" x="-60" y="-12"><div xmlns="http://www.w3.org/1999/xhtml"><span class="nodeLabel">Orders<br>API</span></div></foreignObject></g>
+</g></g></svg></div>`
+
+func TestAnnotateMermaidNode(t *testing.T) {
+	r := newReview(t, "")
+	writeArtifact(t, r.file, "", mermaidExtra)
+	r.page.WaitInFrame("/artifact/", "document.getElementById('flowchart-api-1') !== null")
+	r.waitFrameReady()
+	feedback := r.poll()
+
+	r.page.ClickInFrame("/artifact/", "#flowchart-api-1 rect")
+	r.page.WaitFor(cardOpen)
+	if title := r.text("#card-title"); title != "Annotate diagram node: Orders API" {
+		t.Fatalf("card title = %q", title)
+	}
+	r.page.InsertText("Split reads and writes")
+	r.page.Press("Enter", ModCtrl)
+	fb := awaitFeedback(t, feedback)
+	var target struct{ Type, NodeID, Label, DiagramID string }
+	if err := json.Unmarshal(fb.Prompts[0].Target, &target); err != nil {
+		t.Fatal(err)
+	}
+	if target.Type != "mermaid-node" || target.NodeID != "flowchart-api-1" || target.Label != "Orders API" || target.DiagramID != "mermaid-1" {
+		t.Fatalf("target = %+v", target)
+	}
+	r.page.WaitFor(`document.querySelector('.bubble.user .anchor-label') && document.querySelector('.bubble.user .anchor-label').textContent === 'node'`)
+}
+
+func TestSiblingAssetReload(t *testing.T) {
+	r := newReview(t, ` data-redline-live-reload-root`)
+	css := filepath.Join(filepath.Dir(r.file), "site.css")
+	if err := os.WriteFile(css, []byte("h1 { color: rgb(0, 0, 255) }"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeArtifact(t, r.file, ` data-redline-live-reload-root`, `<link rel="stylesheet" href="site.css">`)
+	r.page.WaitInFrame("/artifact/", `getComputedStyle(document.getElementById('title')).color === 'rgb(0, 0, 255)'`)
+
+	// Editing only the stylesheet reloads the opted-in artifact.
+	if err := os.WriteFile(css, []byte("h1 { color: rgb(255, 0, 0) }"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r.page.WaitInFrame("/artifact/", `getComputedStyle(document.getElementById('title')).color === 'rgb(255, 0, 0)'`)
+
+	// Without the opt-in, a stylesheet edit leaves the page alone.
+	writeArtifact(t, r.file, "", `<link rel="stylesheet" href="site.css">`)
+	r.page.WaitInFrame("/artifact/", `document.documentElement.getAttribute('data-redline-live-reload-root') === null`)
+	r.waitFrameReady()
+	sess, _ := r.m.Store.Session(context.Background(), r.key)
+	if err := os.WriteFile(css, []byte("h1 { color: rgb(0, 128, 0) }"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(2 * watchTreeInterval)
+	if after, _ := r.m.Store.Session(context.Background(), r.key); after.ArtifactRevision != sess.ArtifactRevision {
+		t.Fatalf("a sibling edit reloaded an artifact that did not opt in (revision %d -> %d)", sess.ArtifactRevision, after.ArtifactRevision)
+	}
+}
+
+const watchTreeInterval = 600 * time.Millisecond

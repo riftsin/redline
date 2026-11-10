@@ -298,22 +298,18 @@ func TestPhoneBottomSheet(t *testing.T) {
 	r.page.SetViewport(390, 844, false)
 	const open = "document.documentElement.classList.contains('sheet-open')"
 
-	// The sheet slides for 0.28s; tap it once it has settled, as a person would.
-	settle := func() { time.Sleep(400 * time.Millisecond) }
-	settle() // the resize to phone width slides the panel down to its dock
+	// Clicks wait for the sliding sheet to settle, as a person would.
 	r.page.Click("#sheet-dock")
 	r.page.WaitFor(open)
-	settle()
 	r.page.Click("#sheet-dock")
 	r.page.WaitFor("!" + open)
-	settle()
 
 	// Pointing at an element raises the sheet so the note card is visible.
 	r.page.ClickInFrame("/artifact/", "#intro")
 	r.page.WaitFor(open + " && " + cardOpen)
 
-	// The dimmed artifact closes it.
-	settle()
+	// Tapping the dimmed artifact above the sheet closes it.
+	r.page.Rect("#panel") // wait for the sheet to finish sliding up
 	r.page.ClickAt(195, 60, 0)
 	r.page.WaitFor("!" + open)
 
@@ -322,7 +318,6 @@ func TestPhoneBottomSheet(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.page.WaitFor("document.documentElement.classList.contains('has-unread')")
-	settle()
 	r.page.Click("#sheet-dock")
 	r.page.WaitFor(open + " && !document.documentElement.classList.contains('has-unread')")
 }

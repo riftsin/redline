@@ -2,7 +2,9 @@ package review
 
 import (
 	"context"
+	"os"
 
+	"github.com/riftsin/redline/internal/layout"
 	"github.com/riftsin/redline/internal/store"
 )
 
@@ -118,4 +120,42 @@ func (m *Manager) RecordChange(ctx context.Context, key string, c store.Change) 
 		m.Bus.Publish(Event{Type: TranscriptChanged, Key: key})
 	}
 	return nil
+}
+
+// ApplyLayoutPass records one audit pass. Detection is passive: it updates
+// the inbox and never wakes the agent.
+func (m *Manager) ApplyLayoutPass(ctx context.Context, key string, p layout.Pass) error {
+	changed, err := m.Store.ApplyLayoutPass(ctx, key, p, m.LayoutClasses())
+	if err != nil {
+		return err
+	}
+	if changed {
+		m.Bus.Publish(Event{Type: LayoutChanged, Key: key})
+	}
+	return nil
+}
+
+// QueueLayoutFixes turns the reviewer's selected issues into one queued note.
+func (m *Manager) QueueLayoutFixes(ctx context.Context, key string, ids []string) (int, error) {
+	n, err := m.Store.QueueLayoutFixes(ctx, key, ids)
+	if err != nil || n == 0 {
+		return n, err
+	}
+	m.Bus.Publish(Event{Type: LayoutChanged, Key: key})
+	m.Bus.Publish(Event{Type: QueueChanged, Key: key})
+	return n, nil
+}
+
+// DismissLayoutWarning hides an issue for the current artifact revision.
+func (m *Manager) DismissLayoutWarning(ctx context.Context, key, id string) error {
+	changed, err := m.Store.DismissLayoutWarning(ctx, key, id)
+	if err == nil && changed {
+		m.Bus.Publish(Event{Type: LayoutChanged, Key: key})
+	}
+	return err
+}
+
+// LayoutClasses are the audited viewport classes (REDLINE_DIAGNOSTIC_VIEWPORTS).
+func (m *Manager) LayoutClasses() []string {
+	return layout.ViewportClassesFromEnv(os.Getenv("REDLINE_DIAGNOSTIC_VIEWPORTS"))
 }

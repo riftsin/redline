@@ -347,10 +347,7 @@ func (s *Store) Enqueue(ctx context.Context, item QueueItem) (int64, error) {
 	item.Tag = bound(strings.ToLower(item.Tag), tagMax)
 	item.Excerpt = bound(item.Excerpt, excerptMax*4)
 	item.QueueKey = strings.TrimSpace(truncate(item.QueueKey, queueKeyMax))
-	target := ""
-	if len(item.Target) > 0 && len(item.Target) <= targetMax && json.Valid(item.Target) && string(item.Target) != "null" {
-		target = string(item.Target)
-	}
+	target := normalizeTarget(item.Target)
 	attachments, err := encodeRefs(item.Attachments)
 	if err != nil {
 		return 0, err
@@ -505,6 +502,34 @@ type SendRequest struct {
 	Describe Describer
 }
 
+// normalizeTarget keeps a browser-reported target only when it is valid,
+// small JSON, and reduces a Mermaid node target to its fixed shape.
+func normalizeTarget(raw json.RawMessage) string {
+	if len(raw) == 0 || len(raw) > targetMax || !json.Valid(raw) || string(raw) == "null" {
+		return ""
+	}
+	var head struct {
+		Type string `json:"type"`
+	}
+	if json.Unmarshal(raw, &head) == nil && head.Type == "mermaid-node" {
+		var node struct {
+			DiagramID string `json:"diagramId"`
+			NodeID    string `json:"nodeId"`
+			Label     string `json:"label"`
+			Selector  string `json:"selector"`
+		}
+		if json.Unmarshal(raw, &node) != nil {
+			return ""
+		}
+		b, _ := json.Marshal(map[string]string{
+			"type": "mermaid-node", "diagramId": truncate(node.DiagramID, 200), "nodeId": truncate(node.NodeID, 200),
+			"label": bound(node.Label, 120), "selector": bound(node.Selector, selectorMax),
+		})
+		return string(b)
+	}
+	return string(raw)
+}
+
 // PromptFor is the prompt exactly as the agent receives it (attachments
 // are resolved separately).
 func PromptFor(it QueueItem) Prompt {
@@ -529,6 +554,9 @@ func AnchorFor(it QueueItem) *Anchor {
 		_ = json.Unmarshal(it.Target, &target)
 	}
 
+	if it.Kind == "layout" {
+		return &Anchor{Kind: "layout", Label: "layout issues", Excerpt: bound(it.Excerpt, excerptMax)}
+	}
 	var a *Anchor
 	switch target.Type {
 	case "text-range":
@@ -537,6 +565,14 @@ func AnchorFor(it QueueItem) *Anchor {
 			text = it.Excerpt
 		}
 		a = &Anchor{Kind: "text", Label: "text", Excerpt: bound(text, excerptMax)}
+	case "mermaid-node":
+		var node struct{ Label, NodeID string }
+		_ = json.Unmarshal(it.Target, &node)
+		excerpt := node.Label
+		if excerpt == "" {
+			excerpt = node.NodeID
+		}
+		a = &Anchor{Kind: "node", Label: "node", Excerpt: bound(excerpt, excerptMax)}
 	case "table-cell":
 		var parts []string
 		for _, p := range []string{target.RowLabel, target.ColumnLabel} {

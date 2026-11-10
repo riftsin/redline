@@ -27,6 +27,8 @@ const (
 	Reload
 	// PollReplaced: another poll took over; Token names the displaced one.
 	PollReplaced
+	// LayoutChanged: the layout-issues inbox changed.
+	LayoutChanged
 )
 
 // Event is one notification on a session's bus.

@@ -106,6 +106,8 @@ func TestPromptHeading(t *testing.T) {
 		{store.Prompt{Kind: "annotation", Tag: "text", Text: "x", Target: json.RawMessage(`{"type":"text-range","text":"quoted words"}`)}, `On selected text "quoted words"`},
 		{store.Prompt{Kind: "annotation", Tag: "td", Target: json.RawMessage(`{"type":"table-cell","rowLabel":"Redis","columnLabel":"Latency"}`)}, "On table cell Redis → Latency"},
 		{store.Prompt{Kind: "answer", Tag: "input", Text: ""}, "Answer from <input>"},
+		{store.Prompt{Kind: "annotation", Tag: "mermaid-node", Target: json.RawMessage(`{"type":"mermaid-node","nodeId":"flowchart-api-1","label":"Orders API","diagramId":"mermaid-1"}`)}, `On diagram node "Orders API" (node id flowchart-api-1 in mermaid-1)`},
+		{store.Prompt{Kind: "layout", Text: "2 selected"}, "Layout issues the user asked you to fix (2 selected)"},
 	} {
 		if got := promptHeading(c.p); got != c.want {
 			t.Errorf("promptHeading(%+v) = %q, want %q", c.p, got, c.want)

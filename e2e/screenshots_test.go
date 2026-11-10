@@ -109,3 +109,32 @@ func TestScreenshots(t *testing.T) {
 		}
 	}
 }
+
+// TestLayoutScreenshots captures the layout-issues drawer.
+func TestLayoutScreenshots(t *testing.T) {
+	out := os.Getenv("REDLINE_SCREENSHOT_DIR")
+	if out == "" {
+		t.Skip("set REDLINE_SCREENSHOT_DIR to capture screenshots")
+	}
+	if err := os.MkdirAll(out, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name          string
+		width, height int
+		dark          bool
+	}{{"desktop-light", 1280, 800, false}, {"desktop-dark", 1280, 800, true}, {"phone-light", 390, 844, false}} {
+		t.Run(c.name, func(t *testing.T) {
+			r := newReview(t, "")
+			r.page.SetViewport(c.width, c.height, c.dark)
+			if err := os.WriteFile(r.file, []byte(clippedPage), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			r.page.WaitFor(`!document.getElementById('layout-button').hidden`)
+			r.page.Click("#layout-button")
+			r.page.Click(".layout-item .layout-check")
+			time.Sleep(400 * time.Millisecond)
+			r.page.Screenshot(filepath.Join(out, "layout-"+c.name+".png"))
+		})
+	}
+}
