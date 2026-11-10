@@ -157,6 +157,34 @@ func TestSendTakeRestoreDeliver(t *testing.T) {
 	}
 }
 
+func TestSendDeliversSelectionAfterQueueAndBeforeMessage(t *testing.T) {
+	ctx := context.Background()
+	s := openTest(t)
+	mustOpen(t, s, "k")
+	if _, err := s.Enqueue(ctx, QueueItem{SessionKey: "k", Kind: "annotation", Prompt: "queued first", Tag: "p", Selector: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	sel := &QueueItem{Kind: "answer", QueueKey: "ignored", Prompt: "  ", Tag: "DIV", Selector: "div#option-a", Excerpt: "Option A", Target: json.RawMessage(`not json`)}
+	res, err := s.SendQueue(ctx, SendRequest{Key: "k", Message: "thanks", Selection: sel, End: true})
+	if err != nil || res.Sent != 3 || !res.Ended {
+		t.Fatalf("send: %+v %v", res, err)
+	}
+	fb, err := s.TakeFeedback(ctx, "k")
+	if err != nil || len(fb.Prompts) != 3 {
+		t.Fatalf("take: %+v %v", fb, err)
+	}
+	if p := fb.Prompts[1]; p.Kind != "annotation" || p.Prompt != "" || p.Tag != "div" || p.Selector != "div#option-a" || p.Text != "Option A" || len(p.Target) != 0 {
+		t.Fatalf("selection prompt = %+v", p)
+	}
+	if fb.Prompts[0].Prompt != "queued first" || fb.Prompts[2].Kind != "message" {
+		t.Fatalf("order = %+v", fb.Prompts)
+	}
+	chat, _ := s.Transcript(ctx, "k", 100)
+	if len(chat) != 3 || chat[1].Anchor == nil || chat[1].Text != "" {
+		t.Fatalf("transcript = %+v", chat)
+	}
+}
+
 func TestRestoreKeepsNewerState(t *testing.T) {
 	ctx := context.Background()
 	s := openTest(t)

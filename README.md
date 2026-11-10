@@ -59,7 +59,7 @@ agent writes artifact.html
 ## The review page
 
 - **Annotate** (default): click any element or select text in the artifact, write a note, press
-  Enter to queue it (⌘↵ / Ctrl+Enter queues and sends). **Explore**: use the page normally. ⌘I /
+  Enter to queue it (⌘↵ / Ctrl+Enter sends it right away). **Explore**: use the page normally. ⌘I /
   Ctrl+I toggles. An artifact can start in Explore with `<html data-redline-annotate="off">`.
 - Native controls (inputs, buttons, labels, …) and widgets with an interactive ARIA role
   (`role="button"`, `tab`, `switch`, …) keep working in Annotate. Mark other custom clickable elements
@@ -72,7 +72,8 @@ agent writes artifact.html
   the paperclip. The agent receives each image's local file path.
 - Queued notes can be edited in place (Enter saves, Escape discards) or removed before you send.
 - **Send to Agent** delivers every queued note plus your message, with a compact outline of the
-  rendered page. **Send & End** also ends the session; the agent must not reopen it uninvited
+  rendered page. An element you selected but did not queue goes along too, so clicking it and
+  pressing Send is enough; a message written while it is selected is sent as the note on it. **Send & End** also ends the session; the agent must not reopen it uninvited
   (`redline <file> --reopen` overrides).
 - **Live reload** follows the HTML file. To also reload when stylesheets, images or scripts next to it
   change, add `data-redline-live-reload-root` to `<html>` or `<meta name="redline-live-reload"

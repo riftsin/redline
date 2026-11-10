@@ -38,7 +38,7 @@
   if (IS_MAC) {
     const hint = document.getElementById("card-hint");
     hint.textContent = "⌘↵ also sends";
-    hint.title = "Enter queues the note; ⌘↵ queues it and sends everything";
+    hint.title = "Enter queues the note; ⌘↵ sends it now with everything queued";
   }
 
   const state = {
@@ -119,6 +119,10 @@
       if (state.ended) {
         closeCard();
         toFrame("set-mode", { mode: "explore" });
+      } else {
+        // Reopened (redline <file> --reopen): annotating works again in this
+        // tab, in the mode the toolbar shows.
+        toFrame("set-mode", { mode: state.mode });
       }
     }
     updateControls();
@@ -578,7 +582,7 @@
     toFrame("clear-selection");
   }
 
-  async function queueNote(andSend) {
+  async function queueNote() {
     const target = state.pending;
     const prompt = note.value.trim();
     const refs = readyRefs("card");
@@ -599,7 +603,6 @@
       });
       closeCard();
       showError("");
-      if (andSend) await send(false);
     } catch (error) {
       showError(error.message);
     }
@@ -619,21 +622,21 @@
 
   card.addEventListener("submit", (event) => {
     event.preventDefault();
-    queueNote(false);
+    queueNote();
   });
   document.getElementById("card-cancel").addEventListener("click", closeCard);
 
-  // Enter queues the note; Shift+Enter is a newline; Cmd/Ctrl+Enter queues
-  // and sends everything; Escape cancels. The Enter that confirms an input
+  // Enter queues the note; Shift+Enter is a newline; Cmd/Ctrl+Enter sends
+  // it with everything queued; Escape cancels. The Enter that confirms an input
   // method composition never queues.
   note.addEventListener("keydown", (event) => {
     if (event.isComposing || event.keyCode === 229) return;
     if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
       event.preventDefault();
-      queueNote(true);
+      send(false);
     } else if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
-      queueNote(false);
+      queueNote();
     } else if (event.key === "Escape") {
       event.preventDefault();
       closeCard();
@@ -642,16 +645,40 @@
 
   // -- Composer -----------------------------------------------------------------
 
+  // An element selected in the artifact travels with the send even when its
+  // note was never queued: the selection already says what is meant. With
+  // an empty note card, the message box text is the note on that element.
   async function send(end) {
     if (state.sending || state.ended) return;
-    if (images.composer.some((i) => i.status === "uploading")) return;
+    if (images.composer.some((i) => i.status === "uploading") || images.card.some((i) => i.status === "uploading")) return;
     state.sending = true;
     updateControls();
+    const pending = state.pending;
+    let message = composerInput.value;
+    let attachments = readyRefs("composer");
+    let selection = null;
+    if (pending) {
+      selection = {
+        prompt: note.value.trim(),
+        attachments: readyRefs("card"),
+        selector: pending.selector || "",
+        tag: pending.tag || "",
+        text: pending.text || "",
+        target: pending.target || null,
+      };
+      if (!selection.prompt && selection.attachments.length === 0) {
+        selection.prompt = message.trim();
+        selection.attachments = attachments;
+        message = "";
+        attachments = [];
+      }
+    }
     try {
       const snapshot = await requestSnapshot();
-      await api("/send", { message: composerInput.value, attachments: readyRefs("composer"), snapshot, end });
+      await api("/send", { message, attachments, snapshot, end, selection });
       composerInput.value = "";
       clearImages("composer");
+      if (pending && state.pending === pending) closeCard();
       showError("");
     } catch (error) {
       showError(error.message);

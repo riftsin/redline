@@ -297,13 +297,22 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 		Attachments []store.AttachmentRef `json:"attachments"`
 		Snapshot    string                `json:"snapshot"`
 		End         bool                  `json:"end"`
+		// Selection: the element selected in the artifact whose note card
+		// is still open; it travels with the send.
+		Selection *noteRequest `json:"selection"`
 	}
 	if !readJSON(w, r, &body) {
 		return
 	}
-	res, err := s.m.Send(r.Context(), store.SendRequest{
+	req := store.SendRequest{
 		Key: sess.Key, Message: body.Message, MessageAttachments: body.Attachments, Snapshot: body.Snapshot, End: body.End,
-	})
+	}
+	if sel := body.Selection; sel != nil {
+		req.Selection = &store.QueueItem{
+			Prompt: sel.Prompt, Selector: sel.Selector, Tag: sel.Tag, Excerpt: sel.Text, Target: sel.Target, Attachments: sel.Attachments,
+		}
+	}
+	res, err := s.m.Send(r.Context(), req)
 	if s.actionError(w, err) {
 		return
 	}

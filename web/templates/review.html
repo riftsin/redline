@@ -62,7 +62,7 @@
         <div class="chips" data-chips="card" hidden></div>
         <div class="card-actions">
           {{template "attach" "card"}}
-          <span class="hint" id="card-hint" title="Enter queues the note; Ctrl+Enter queues it and sends everything">Ctrl+↵ also sends</span>
+          <span class="hint" id="card-hint" title="Enter queues the note; Ctrl+Enter sends it now with everything queued">Ctrl+↵ also sends</span>
           <button type="button" class="button ghost" id="card-cancel">Cancel</button>
           <button type="submit" class="button">Queue note</button>
         </div>
@@ -75,7 +75,7 @@
         <p class="form-error" id="composer-error" role="alert" hidden></p>
         <div class="composer-actions">
           {{template "attach" "composer"}}
-          <button type="button" class="button danger-outline" id="send-end" title="Send queued notes and end the review">Send &amp; End</button>
+          <button type="button" class="button danger-outline" id="send-end" title="Send queued notes and any selected element, then end the review">Send &amp; End</button>
           <button type="submit" class="button primary" id="send">Send to Agent</button>
         </div>
       </form>

@@ -342,12 +342,8 @@ func encodeRefs(refs []AttachmentRef) (string, error) {
 // Enqueue queues a note. An existing item with the same non-empty QueueKey
 // is replaced, so re-answering a question keeps one queued answer.
 func (s *Store) Enqueue(ctx context.Context, item QueueItem) (int64, error) {
-	item.Prompt = truncate(item.Prompt, promptMax)
-	item.Selector = bound(item.Selector, selectorMax)
-	item.Tag = bound(strings.ToLower(item.Tag), tagMax)
-	item.Excerpt = bound(item.Excerpt, excerptMax*4)
-	item.QueueKey = strings.TrimSpace(truncate(item.QueueKey, queueKeyMax))
-	target := normalizeTarget(item.Target)
+	item = normalizeItem(item)
+	target := string(item.Target)
 	attachments, err := encodeRefs(item.Attachments)
 	if err != nil {
 		return 0, err
@@ -416,6 +412,16 @@ func (s *Store) SendQueue(ctx context.Context, req SendRequest) (SendResult, err
 	if _, err := encodeRefs(req.MessageAttachments); err != nil {
 		return result, err
 	}
+	var selection *QueueItem
+	if req.Selection != nil {
+		it := normalizeItem(*req.Selection)
+		it.SessionKey, it.Kind, it.QueueKey = key, "annotation", ""
+		it.Prompt = strings.TrimSpace(it.Prompt)
+		if _, err := encodeRefs(it.Attachments); err != nil {
+			return result, err
+		}
+		selection = &it
+	}
 	if len(snapshot) > snapshotMax {
 		snapshot = snapshot[:snapshotMax]
 	}
@@ -426,6 +432,9 @@ func (s *Store) SendQueue(ctx context.Context, req SendRequest) (SendResult, err
 		items, err := queryQueue(ctx, tx, key)
 		if err != nil {
 			return err
+		}
+		if selection != nil {
+			items = append(items, *selection)
 		}
 		if message != "" || len(req.MessageAttachments) > 0 {
 			items = append(items, QueueItem{SessionKey: key, Kind: "message", Prompt: message, Attachments: req.MessageAttachments})
@@ -498,8 +507,23 @@ type SendRequest struct {
 	MessageAttachments []AttachmentRef
 	Snapshot           string
 	End                bool
+	// Selection is the element the reviewer selected and had not queued
+	// yet: it is delivered as an annotation ahead of the message, even
+	// with no note, because the selection itself says what is meant.
+	Selection *QueueItem
 	// Describe resolves attachments to local files for the agent.
 	Describe Describer
+}
+
+// normalizeItem bounds a browser-reported note to what the store keeps.
+func normalizeItem(item QueueItem) QueueItem {
+	item.Prompt = truncate(item.Prompt, promptMax)
+	item.Selector = bound(item.Selector, selectorMax)
+	item.Tag = bound(strings.ToLower(item.Tag), tagMax)
+	item.Excerpt = bound(item.Excerpt, excerptMax*4)
+	item.QueueKey = strings.TrimSpace(truncate(item.QueueKey, queueKeyMax))
+	item.Target = json.RawMessage(normalizeTarget(item.Target))
+	return item
 }
 
 // normalizeTarget keeps a browser-reported target only when it is valid,

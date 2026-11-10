@@ -207,7 +207,7 @@ func TestAnnotateSelectedText(t *testing.T) {
 		t.Fatalf("card title = %q", title)
 	}
 	r.page.InsertText("Clarify")
-	r.page.Press("Enter", ModCtrl) // Ctrl+Enter queues and sends
+	r.page.Press("Enter", ModCtrl) // Ctrl+Enter sends the note right away
 	fb := awaitFeedback(t, feedback)
 	if len(fb.Prompts) != 1 {
 		t.Fatalf("prompts = %+v", fb.Prompts)
@@ -320,4 +320,92 @@ func TestPhoneBottomSheet(t *testing.T) {
 	r.page.WaitFor("document.documentElement.classList.contains('has-unread')")
 	r.page.Click("#sheet-dock")
 	r.page.WaitFor(open + " && !document.documentElement.classList.contains('has-unread')")
+}
+
+// Bug report: after the user ends a session and the agent reopens it with
+// --reopen, clicking an element in the same review tab must open a note card
+// again, so the note carries its anchor.
+func TestAnnotateAfterReopenInSameTab(t *testing.T) {
+	r := newReview(t, "")
+
+	// The user ends the session from the menu.
+	r.page.Click("#menu-button")
+	r.page.Click("[data-action=end]")
+	r.page.WaitFor(`document.getElementById('review').classList.contains('is-ended')`)
+
+	// The agent reopens it (redline <file> --reopen); the tab stays open.
+	if _, _, err := r.m.Open(context.Background(), r.key, r.file, true); err != nil {
+		t.Fatal(err)
+	}
+	r.page.WaitFor(`!document.getElementById('review').classList.contains('is-ended')`)
+	feedback := r.poll()
+
+	r.page.ClickInFrame("/artifact/", "#title")
+	r.page.WaitFor(cardOpen)
+	r.page.InsertText("do that")
+	r.page.Press("Enter", 0)
+	r.page.WaitFor(`document.querySelector('.queued-bubble')`)
+	r.page.Click("#send-end")
+	fb := awaitFeedback(t, feedback)
+	if len(fb.Prompts) != 1 || fb.Prompts[0].Selector != "h1#title" || fb.Prompts[0].Prompt != "do that" {
+		t.Fatalf("prompts = %+v", fb.Prompts)
+	}
+}
+
+// The bug report flow: click an element, write in the message box (not the
+// note card) and press Send & End. The clicked element is the anchor.
+func TestSendEndCarriesSelectedElement(t *testing.T) {
+	r := newReview(t, "")
+	feedback := r.poll()
+
+	r.page.ClickInFrame("/artifact/", "#title")
+	r.page.WaitFor(cardOpen)
+	r.page.Click("#composer-input")
+	r.page.InsertText("do that")
+	r.page.Click("#send-end")
+
+	fb := awaitFeedback(t, feedback)
+	if len(fb.Prompts) != 1 {
+		t.Fatalf("prompts = %+v", fb.Prompts)
+	}
+	p := fb.Prompts[0]
+	if p.Kind != "annotation" || p.Selector != "h1#title" || p.Tag != "h1" || p.Text != "Launch plan" || p.Prompt != "do that" {
+		t.Fatalf("prompt = %+v", p)
+	}
+	if !fb.SessionEnded {
+		t.Fatalf("Send & End did not end the session: %+v", fb)
+	}
+	r.page.WaitFor(cardClosed)
+	r.page.WaitFor(`document.querySelector('.bubble.user .anchor') && document.querySelector('.bubble.user .bubble-text').textContent === 'do that'`)
+}
+
+// A click alone is enough: Send delivers the selected element with no note.
+// A note in the card and a message in the box arrive as two prompts.
+func TestSendCarriesSelectionWithoutNote(t *testing.T) {
+	r := newReview(t, "")
+
+	feedback := r.poll()
+	r.page.ClickInFrame("/artifact/", "#title")
+	r.page.WaitFor(cardOpen)
+	r.page.Click("#send")
+	fb := awaitFeedback(t, feedback)
+	if len(fb.Prompts) != 1 || fb.Prompts[0].Kind != "annotation" || fb.Prompts[0].Selector != "h1#title" || fb.Prompts[0].Prompt != "" {
+		t.Fatalf("prompts = %+v", fb.Prompts)
+	}
+	r.page.WaitFor(cardClosed)
+	r.page.WaitFor(`document.querySelector('.bubble.user .anchor') && !document.querySelector('.bubble.user .bubble-text')`)
+
+	feedback = r.poll()
+	r.page.ClickInFrame("/artifact/", "#intro")
+	r.page.WaitFor(cardOpen)
+	r.page.InsertText("Shorter")
+	r.page.Click("#composer-input")
+	r.page.InsertText("Otherwise good")
+	r.page.Click("#send")
+	fb = awaitFeedback(t, feedback)
+	if len(fb.Prompts) != 2 || fb.Prompts[0].Selector != "p#intro" || fb.Prompts[0].Prompt != "Shorter" ||
+		fb.Prompts[1].Kind != "message" || fb.Prompts[1].Prompt != "Otherwise good" {
+		t.Fatalf("prompts = %+v", fb.Prompts)
+	}
+	r.page.WaitFor(cardClosed)
 }
