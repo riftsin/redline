@@ -3,12 +3,41 @@
 package e2e
 
 import (
+	"bytes"
 	"context"
+	"image"
+	"image/color"
+	"image/png"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
+
+// shotPNG writes a small striped image to attach.
+func shotPNG(t *testing.T) string {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, 120, 80))
+	for y := 0; y < 80; y++ {
+		for x := 0; x < 120; x++ {
+			c := color.RGBA{230, 236, 245, 255}
+			if (x/12+y/12)%2 == 0 {
+				c = color.RGBA{70, 110, 180, 255}
+			}
+			img.Set(x, y, c)
+		}
+	}
+	var b bytes.Buffer
+	if err := png.Encode(&b, img); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "spacing.png")
+	if err := os.WriteFile(path, b.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
 
 // TestScreenshots captures the review page in its main states for visual
 // review. It runs only when REDLINE_SCREENSHOT_DIR names an output folder.
@@ -46,15 +75,30 @@ func TestScreenshots(t *testing.T) {
 				r.page.WaitFor(`document.querySelector('.queued-bubble')`)
 				feedback := r.poll()
 				r.page.WaitFor(`document.getElementById('presence').textContent.includes('listening')`)
+				r.page.SetInputFiles("input[data-attach=composer]", shotPNG(t))
+				r.page.Click("#composer-input")
+				r.page.InsertText("Also, the screenshot shows the spacing I mean.")
+				r.page.WaitFor(`document.querySelector('[data-chips=composer] .chip') && !document.querySelector('[data-chips=composer] .chip-status')`)
 				shot("3-queued")
 
 				r.page.Click("#send")
 				awaitFeedback(t, feedback)
-				if err := r.m.Reply(context.Background(), r.key, "Done: the title is bigger and now says “Launch plan – March 3”.\nAnything else?"); err != nil {
+				html := strings.Replace(strings.Replace(artifactHTML, "%s", "", 1), "Launch plan", "Launch plan – March 3", 1)
+				if err := os.WriteFile(r.file, []byte(html), 0o644); err != nil {
 					t.Fatal(err)
 				}
-				r.page.WaitFor(`document.querySelector('.bubble.agent')`)
+				r.page.WaitFor(`!document.getElementById('changes-chip').hidden`)
+				if err := r.m.Reply(context.Background(), r.key, "Done:\n- the title is **bigger** and now says *March 3*\n- tightened the `h1` spacing\n\nAnything else?"); err != nil {
+					t.Fatal(err)
+				}
+				r.page.WaitFor(`document.querySelector('.bubble.agent .changes-link')`)
 				shot("4-conversation")
+
+				if size.name == "desktop" {
+					r.page.Click("#sidebar-toggle")
+					shot("4b-collapsed")
+					r.page.Click("#sidebar-toggle")
+				}
 
 				if _, err := r.m.End(context.Background(), r.key, "user"); err != nil {
 					t.Fatal(err)

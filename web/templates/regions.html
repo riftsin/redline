@@ -12,6 +12,10 @@
 
 {{define "anchor"}}{{if .}}<button type="button" class="anchor" data-selector="{{.Selector}}" title="Show in the artifact"><span class="anchor-label">{{.Label}}</span>{{if .Excerpt}}<span class="anchor-excerpt">“{{.Excerpt}}”</span>{{end}}</button>{{end}}{{end}}
 
+{{define "images"}}{{if .}}<div class="thumbs">{{range .}}{{if .Gone}}<span class="thumb-expired" title="{{.Name}}">Image expired</span>{{else}}<a class="thumb" href="{{.URL}}" target="_blank" rel="noopener" title="{{.Name}}"><img src="{{.URL}}" alt="{{if .Name}}{{.Name}}{{else}}Attached image{{end}}" loading="lazy"></a>{{end}}{{end}}</div>{{end}}{{end}}
+
+{{define "receipt"}}{{with .}}<div class="receipt">{{range .Steps}}<span class="step{{if .Done}} done{{end}}" title="{{.Label}}{{if .When}} {{.When}}{{else}} - not yet{{end}}" aria-label="{{.Label}}{{if .When}} {{.When}}{{else}} - not yet{{end}}">{{.Emoji}}</span>{{end}}{{if .Pending}}<span class="receipt-pending">{{.Pending}}</span>{{end}}</div>{{end}}{{end}}
+
 {{define "conversation"}}<div id="conversation" class="conversation" data-queued="{{len .Queue}}">
   {{if and (not .Transcript) (not .Queue) (not .Ended)}}
   <p class="empty-hint">Click an element in the artifact or select text to leave a note, or write a message below.</p>
@@ -21,13 +25,15 @@
     {{range .Transcript}}
     {{if eq .Role "agent"}}
     <div class="bubble agent">
-      <div class="bubble-meta"><span class="who">Agent</span></div>
-      <p class="bubble-text">{{.Text}}</p>
+      <div class="bubble-meta"><span class="who">Agent</span>{{if .Rewrite}}<span class="changes-link changes-rewrite" title="Most of the page changed for this reply">Page rewritten</span>{{else if .ChangesCount}}<button type="button" class="changes-link" data-changes="{{.ChangesJSON}}" title="Show what the agent changed for this reply">{{.ChangesCount}} {{if eq .ChangesCount 1}}change{{else}}changes{{end}}</button>{{end}}</div>
+      <div class="bubble-text markdown">{{.HTML}}</div>
     </div>
     {{else}}
     <div class="bubble user">
       {{if .Anchor}}<div class="bubble-meta">{{template "anchor" .Anchor}}</div>{{end}}
       {{if .Text}}<p class="bubble-text">{{.Text}}</p>{{end}}
+      {{template "images" .Attachments}}
+      {{template "receipt" .Receipt}}
     </div>
     {{end}}
     {{end}}
@@ -40,9 +46,15 @@
       <div class="bubble-meta">
         <span class="badge">Queued</span>
         {{template "anchor" .Anchor}}
-        <button type="button" class="remove" data-remove="{{.ID}}" aria-label="Remove queued note">×</button>
+        <span class="queued-actions">
+          <button type="button" class="edit" data-edit="{{.ID}}" aria-label="Edit queued note" title="Edit">
+            <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true"><path d="M11.3 2.3a1.5 1.5 0 0 1 2.1 2.1l-8 8-3 .9.9-3 8-8Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+          </button>
+          <button type="button" class="remove" data-remove="{{.ID}}" aria-label="Remove queued note" title="Remove">×</button>
+        </span>
       </div>
-      {{if .Prompt}}<p class="bubble-text">{{.Prompt}}</p>{{end}}
+      <p class="bubble-text" data-prompt="{{.ID}}">{{.Prompt}}</p>
+      {{template "images" .Attachments}}
     </div>
     {{end}}
   </div>

@@ -26,6 +26,9 @@ type Page struct {
 	// session. Chrome isolates sandboxed iframes into their own process, so
 	// an artifact frame is usually one of these.
 	frameSessions map[string]string
+	// errors collects uncaught JavaScript exceptions from every frame; a
+	// failing test prints them.
+	errors []string
 }
 
 // DefaultTimeout bounds every single browser step.
@@ -87,6 +90,30 @@ func (b *Browser) NewPage(t testing.TB) *Page {
 				// An OOPIF's target id is its frame id.
 				p.frameSessions[ev.TargetInfo.TargetID] = ev.SessionID
 				p.mu.Unlock()
+				// Report the frame's exceptions too. This runs on the read
+				// loop, so the call must not wait here.
+				go func() {
+					ctx, cancel := context.WithTimeout(context.Background(), DefaultTimeout)
+					defer cancel()
+					_ = b.call(ctx, ev.SessionID, "Runtime.enable", nil, nil)
+				}()
+			}
+		case "Runtime.exceptionThrown":
+			var ev struct {
+				ExceptionDetails struct {
+					Text      string `json:"text"`
+					URL       string `json:"url"`
+					Line      int    `json:"lineNumber"`
+					Exception struct {
+						Description string `json:"description"`
+					} `json:"exception"`
+				} `json:"exceptionDetails"`
+			}
+			if json.Unmarshal(msg.Params, &ev) == nil {
+				d := ev.ExceptionDetails
+				p.mu.Lock()
+				p.errors = append(p.errors, fmt.Sprintf("%s:%d %s %s", d.URL, d.Line+1, d.Text, d.Exception.Description))
+				p.mu.Unlock()
 			}
 		case "Target.detachedFromTarget":
 			var ev struct {
@@ -115,6 +142,18 @@ func (b *Browser) NewPage(t testing.TB) *Page {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
+		p.mu.Lock()
+		errs := append([]string(nil), p.errors...)
+		p.mu.Unlock()
+		if t.Failed() {
+			for _, e := range errs {
+				t.Logf("page exception: %s", e)
+			}
+			var debug string
+			if p.eval(p.sessionID, 0, `JSON.stringify({error: (document.getElementById('composer-error')||{}).textContent, card: !(document.getElementById('annotation-card')||{hidden:true}).hidden})`, &debug) == nil {
+				t.Logf("page state: %s", debug)
+			}
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), DefaultTimeout)
 		defer cancel()
 		_ = b.call(ctx, "", "Target.closeTarget", map[string]any{"targetId": p.targetID}, nil)
@@ -286,10 +325,26 @@ func (p *Page) Rect(selector string) Rect {
 // contains urlPart, translated into the top-level viewport.
 func (p *Page) RectInFrame(urlPart, selector string) Rect {
 	p.t.Helper()
-	// Every caller is about to send input there, and Chrome drops input
-	// aimed at an out-of-process frame that has not painted yet: wait for
-	// two of its animation frames first.
-	p.EvalInFrame(urlPart, "new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))", nil)
+	// Every caller is about to send input there. Like a person, bring the
+	// element into view and wait until it stops moving (smooth scrolling,
+	// a sheet sliding); this also waits for the out-of-process frame to
+	// paint, without which Chrome drops the input.
+	sel, _ := json.Marshal(selector)
+	p.EvalInFrame(urlPart, fmt.Sprintf(`(async () => {
+		const el = document.querySelector(%s);
+		if (!el) return;
+		const r0 = el.getBoundingClientRect();
+		if (r0.bottom < 0 || r0.top > innerHeight || r0.right < 0 || r0.left > innerWidth) el.scrollIntoView({block: "center"});
+		const frame = () => new Promise((r) => requestAnimationFrame(r));
+		let last = "", stable = 0;
+		for (let i = 0; i < 120 && stable < 3; i++) {
+			await frame();
+			const r = el.getBoundingClientRect();
+			const now = r.x + "," + r.y + "," + r.width + "," + r.height;
+			stable = now === last ? stable + 1 : 0;
+			last = now;
+		}
+	})()`, sel), nil)
 	var inner Rect
 	p.EvalInFrame(urlPart, rectExpression(selector), &inner)
 
@@ -517,6 +572,31 @@ func (p *Page) SetViewport(width, height int, dark bool) {
 	if err := p.b.call(ctx, p.sessionID, "Emulation.setEmulatedMedia", map[string]any{
 		"features": []map[string]string{{"name": "prefers-color-scheme", "value": scheme}},
 	}, nil); err != nil {
+		p.t.Fatal(err)
+	}
+}
+
+// SetInputFiles chooses files for a file input in the top-level page, as if
+// the reviewer picked them.
+func (p *Page) SetInputFiles(selector string, files ...string) {
+	p.t.Helper()
+	ctx, cancel := p.ctx()
+	defer cancel()
+	var doc struct {
+		Root struct {
+			NodeID int64 `json:"nodeId"`
+		} `json:"root"`
+	}
+	if err := p.b.call(ctx, p.sessionID, "DOM.getDocument", map[string]any{"depth": 0}, &doc); err != nil {
+		p.t.Fatal(err)
+	}
+	var found struct {
+		NodeID int64 `json:"nodeId"`
+	}
+	if err := p.b.call(ctx, p.sessionID, "DOM.querySelector", map[string]any{"nodeId": doc.Root.NodeID, "selector": selector}, &found); err != nil || found.NodeID == 0 {
+		p.t.Fatalf("no element %s: %v", selector, err)
+	}
+	if err := p.b.call(ctx, p.sessionID, "DOM.setFileInputFiles", map[string]any{"nodeId": found.NodeID, "files": files}, nil); err != nil {
 		p.t.Fatal(err)
 	}
 }

@@ -58,7 +58,7 @@ func TestUserEndedSessionNeedsReopen(t *testing.T) {
 	s := openTest(t)
 	mustOpen(t, s, "k")
 
-	if _, err := s.SendQueue(ctx, "k", "", "", true); err != nil {
+	if _, err := s.SendQueue(ctx, SendRequest{Key: "k", Message: "", Snapshot: "", End: true}); err != nil {
 		t.Fatal(err)
 	}
 	sess, res, err := s.OpenSession(ctx, "k", "/tmp/k.html", false)
@@ -121,7 +121,7 @@ func TestSendTakeRestoreDeliver(t *testing.T) {
 		t.Fatalf("take before send = %q", fb.Status)
 	}
 
-	res, err := s.SendQueue(ctx, "k", "  also shorten it  ", "<snapshot/>", false)
+	res, err := s.SendQueue(ctx, SendRequest{Key: "k", Message: "  also shorten it  ", Snapshot: "<snapshot/>", End: false})
 	if err != nil || res.Sent != 2 || res.Session.Status != StatusFeedback {
 		t.Fatalf("send: %+v %v", res, err)
 	}
@@ -161,11 +161,11 @@ func TestRestoreKeepsNewerState(t *testing.T) {
 	ctx := context.Background()
 	s := openTest(t)
 	mustOpen(t, s, "k")
-	if _, err := s.SendQueue(ctx, "k", "first", "old snapshot", false); err != nil {
+	if _, err := s.SendQueue(ctx, SendRequest{Key: "k", Message: "first", Snapshot: "old snapshot", End: false}); err != nil {
 		t.Fatal(err)
 	}
 	fb, _ := s.TakeFeedback(ctx, "k")
-	if _, err := s.SendQueue(ctx, "k", "second", "new snapshot", false); err != nil {
+	if _, err := s.SendQueue(ctx, SendRequest{Key: "k", Message: "second", Snapshot: "new snapshot", End: false}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.RestoreFeedback(ctx, "k", fb); err != nil {
@@ -181,7 +181,7 @@ func TestSendAndEndDeliversThenEnds(t *testing.T) {
 	ctx := context.Background()
 	s := openTest(t)
 	mustOpen(t, s, "k")
-	if _, err := s.SendQueue(ctx, "k", "last words", "", true); err != nil {
+	if _, err := s.SendQueue(ctx, SendRequest{Key: "k", Message: "last words", Snapshot: "", End: true}); err != nil {
 		t.Fatal(err)
 	}
 	fb, _ := s.TakeFeedback(ctx, "k")
@@ -203,7 +203,7 @@ func TestEndedSessionRefusesWrites(t *testing.T) {
 	if _, err := s.Enqueue(ctx, QueueItem{SessionKey: "k", Kind: "message", Prompt: "x"}); !errors.Is(err, ErrEnded) {
 		t.Errorf("enqueue: %v", err)
 	}
-	if _, err := s.SendQueue(ctx, "k", "x", "", false); !errors.Is(err, ErrEnded) {
+	if _, err := s.SendQueue(ctx, SendRequest{Key: "k", Message: "x", Snapshot: "", End: false}); !errors.Is(err, ErrEnded) {
 		t.Errorf("send: %v", err)
 	}
 	if _, err := s.AddAgentReply(ctx, "k", "x"); !errors.Is(err, ErrEnded) {
@@ -268,5 +268,167 @@ func TestAnchorFor(t *testing.T) {
 	}
 	if AnchorFor(QueueItem{Kind: "message", Prompt: "hi"}) != nil {
 		t.Fatal("messages have no anchor")
+	}
+}
+
+func TestDeliveryReceipts(t *testing.T) {
+	ctx := context.Background()
+	s := openTest(t)
+	mustOpen(t, s, "k")
+	receipt := func() ChatEntry {
+		t.Helper()
+		chat, err := s.Transcript(ctx, "k", 10)
+		if err != nil || len(chat) == 0 {
+			t.Fatalf("transcript: %v %v", chat, err)
+		}
+		return chat[0]
+	}
+
+	if _, err := s.SendQueue(ctx, SendRequest{Key: "k", Message: "make it blue"}); err != nil {
+		t.Fatal(err)
+	}
+	if e := receipt(); e.Receipt != ReceiptLive || !e.DeliveredAt.IsZero() {
+		t.Fatalf("sent, not yet seen: %+v", e)
+	}
+	// Working needs a delivery first.
+	if worked, _ := s.MarkWorking(ctx, "k"); worked {
+		t.Fatal("an undelivered note cannot be worked on")
+	}
+
+	fb, _ := s.TakeFeedback(ctx, "k")
+	if e := receipt(); e.DeliveredAt.IsZero() {
+		t.Fatalf("taken by a poll but not Seen: %+v", e)
+	}
+	// The poll's response never reached the agent: Seen is undone.
+	if err := s.RestoreFeedback(ctx, "k", fb); err != nil {
+		t.Fatal(err)
+	}
+	if e := receipt(); !e.DeliveredAt.IsZero() {
+		t.Fatalf("restored delivery still Seen: %+v", e)
+	}
+
+	if _, err := s.TakeFeedback(ctx, "k"); err != nil {
+		t.Fatal(err)
+	}
+	if worked, _ := s.MarkWorking(ctx, "k"); !worked {
+		t.Fatal("artifact change after delivery should mark Working")
+	}
+	if _, err := s.AddAgentReply(ctx, "k", "Blue now."); err != nil {
+		t.Fatal(err)
+	}
+	if e := receipt(); e.WorkingAt.IsZero() || e.DoneAt.IsZero() {
+		t.Fatalf("after reply: %+v", e)
+	}
+
+	// A note the agent ends a session on stays Seen; reopening freezes it.
+	if _, err := s.SendQueue(ctx, SendRequest{Key: "k", Message: "one more"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.TakeFeedback(ctx, "k"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.EndSession(ctx, "k", EndedByAgent); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.OpenSession(ctx, "k", "/tmp/k.html", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SendQueue(ctx, SendRequest{Key: "k", Message: "new round"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.TakeFeedback(ctx, "k"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddAgentReply(ctx, "k", "Done with the new round."); err != nil {
+		t.Fatal(err)
+	}
+	chat, _ := s.Transcript(ctx, "k", 10)
+	for _, e := range chat {
+		switch e.Text {
+		case "one more":
+			if e.Receipt != ReceiptClosed || !e.DoneAt.IsZero() {
+				t.Errorf("the previous round's note: %+v", e)
+			}
+		case "new round":
+			if e.Receipt != ReceiptLive || e.DoneAt.IsZero() {
+				t.Errorf("this round's note: %+v", e)
+			}
+		}
+	}
+}
+
+func TestEditQueued(t *testing.T) {
+	ctx := context.Background()
+	s := openTest(t)
+	mustOpen(t, s, "k")
+	id, _ := s.Enqueue(ctx, QueueItem{SessionKey: "k", Kind: "annotation", Prompt: "old", Tag: "h1", Selector: "h1"})
+	if err := s.EditQueued(ctx, "k", id, "new text"); err != nil {
+		t.Fatal(err)
+	}
+	q, _ := s.Queue(ctx, "k")
+	if len(q) != 1 || q[0].Prompt != "new text" || q[0].Selector != "h1" {
+		t.Fatalf("queue = %+v", q)
+	}
+	if err := s.EditQueued(ctx, "k", id+1, "x"); !errors.Is(err, ErrNoQueueItem) {
+		t.Fatalf("edit of a missing note: %v", err)
+	}
+}
+
+func TestAttachmentsTravelWithPrompts(t *testing.T) {
+	ctx := context.Background()
+	s := openTest(t)
+	mustOpen(t, s, "k")
+	ref := AttachmentRef{ID: strings.Repeat("a", 64), Name: "shot.png"}
+	if _, err := s.Enqueue(ctx, QueueItem{SessionKey: "k", Kind: "annotation", Prompt: "see", Attachments: []AttachmentRef{ref}}); err != nil {
+		t.Fatal(err)
+	}
+	describe := func(r AttachmentRef) (PromptAttachment, bool) {
+		return PromptAttachment{ID: r.ID, Name: r.Name, Path: "/state/attachments/" + r.ID + ".png", Mime: "image/png"}, true
+	}
+	if _, err := s.SendQueue(ctx, SendRequest{Key: "k", Describe: describe}); err != nil {
+		t.Fatal(err)
+	}
+	fb, _ := s.TakeFeedback(ctx, "k")
+	if len(fb.Prompts) != 1 || len(fb.Prompts[0].Attachments) != 1 || fb.Prompts[0].Attachments[0].Path == "" {
+		t.Fatalf("prompt = %+v", fb.Prompts)
+	}
+	chat, _ := s.Transcript(ctx, "k", 10)
+	if len(chat[0].Attachments) != 1 || chat[0].Attachments[0].Name != "shot.png" {
+		t.Fatalf("chat = %+v", chat[0])
+	}
+
+	// A gone image refuses the send instead of losing the note silently.
+	if _, err := s.Enqueue(ctx, QueueItem{SessionKey: "k", Kind: "annotation", Prompt: "x", Attachments: []AttachmentRef{ref}}); err != nil {
+		t.Fatal(err)
+	}
+	gone := func(AttachmentRef) (PromptAttachment, bool) { return PromptAttachment{}, false }
+	if _, err := s.SendQueue(ctx, SendRequest{Key: "k", Describe: gone}); !errors.Is(err, ErrAttachmentGone) {
+		t.Fatalf("send with a gone image: %v", err)
+	}
+	if q, _ := s.Queue(ctx, "k"); len(q) != 1 {
+		t.Fatal("a refused send must keep the queue")
+	}
+	tooMany := make([]AttachmentRef, MaxAttachmentsPerPrompt+1)
+	for i := range tooMany {
+		tooMany[i] = ref
+	}
+	if _, err := s.Enqueue(ctx, QueueItem{SessionKey: "k", Kind: "annotation", Attachments: tooMany}); !errors.Is(err, ErrTooManyAttachments) {
+		t.Fatalf("too many images: %v", err)
+	}
+}
+
+func TestRecordChange(t *testing.T) {
+	ctx := context.Background()
+	s := openTest(t)
+	mustOpen(t, s, "k")
+	if added, err := s.RecordChange(ctx, "k", Change{Revision: 1, Selectors: []string{"h1#title", ""}}); err != nil || !added {
+		t.Fatalf("record: %v %v", added, err)
+	}
+	if added, _ := s.RecordChange(ctx, "k", Change{Revision: 1, Rewrite: true}); added {
+		t.Fatal("the first report of a revision wins")
+	}
+	changes, _ := s.Changes(ctx, "k")
+	if len(changes) != 1 || len(changes[0].Selectors) != 1 || changes[0].Rewrite {
+		t.Fatalf("changes = %+v", changes)
 	}
 }

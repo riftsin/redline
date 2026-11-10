@@ -53,10 +53,14 @@ func (m *Manager) RemoveQueued(ctx context.Context, key string, id int64) error 
 	return nil
 }
 
-// Send delivers the queue (and message) to the agent; with end, it also
+// Send delivers the queue (and message) to the agent; with End, it also
 // ends the session as the user.
-func (m *Manager) Send(ctx context.Context, key, message, snapshot string, end bool) (store.SendResult, error) {
-	res, err := m.Store.SendQueue(ctx, key, message, snapshot, end)
+func (m *Manager) Send(ctx context.Context, req store.SendRequest) (store.SendResult, error) {
+	key := req.Key
+	if req.Describe == nil {
+		req.Describe = m.Describe
+	}
+	res, err := m.Store.SendQueue(ctx, req)
 	if err != nil {
 		return res, err
 	}
@@ -65,7 +69,7 @@ func (m *Manager) Send(ctx context.Context, key, message, snapshot string, end b
 		m.Bus.Publish(Event{Type: TranscriptChanged, Key: key})
 	}
 	m.Bus.Publish(Event{Type: SessionChanged, Key: key})
-	if res.Sent > 0 || end {
+	if res.Sent > 0 || req.End {
 		m.Bus.Publish(Event{Type: FeedbackReady, Key: key})
 	}
 	return res, nil
@@ -90,6 +94,28 @@ func (m *Manager) RecordArtifactFailures(ctx context.Context, key string, failur
 	}
 	if wake {
 		m.Bus.Publish(Event{Type: FeedbackReady, Key: key})
+	}
+	return nil
+}
+
+// EditQueued rewrites a queued note.
+func (m *Manager) EditQueued(ctx context.Context, key string, id int64, prompt string) error {
+	if err := m.Store.EditQueued(ctx, key, id, prompt); err != nil {
+		return err
+	}
+	m.Bus.Publish(Event{Type: QueueChanged, Key: key})
+	return nil
+}
+
+// RecordChange stores what an artifact revision changed, as a review page
+// measured it, and redraws the conversation that links to it.
+func (m *Manager) RecordChange(ctx context.Context, key string, c store.Change) error {
+	added, err := m.Store.RecordChange(ctx, key, c)
+	if err != nil {
+		return err
+	}
+	if added {
+		m.Bus.Publish(Event{Type: TranscriptChanged, Key: key})
 	}
 	return nil
 }

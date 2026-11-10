@@ -50,9 +50,26 @@ agent writes artifact.html
   with `data-redline-action`; use `data-redline-question` (or `queueKey`) so re-answering a question
   replaces the earlier queued answer. ⌘-click (Ctrl-click off macOS) follows a link instead of
   annotating it.
+- Clicking a table cell also names its row and column (`Redis → Latency`), so feedback stays readable
+  when a table is sorted or filtered; ambiguous merged cells are left unnamed.
+- **Images**: attach PNG, JPEG or WebP screenshots to a note or a message by pasting, dropping or with
+  the paperclip. The agent receives each image's local file path.
+- Queued notes can be edited in place (Enter saves, Escape discards) or removed before you send.
 - **Send to Agent** delivers every queued note plus your message, with a compact outline of the
   rendered page. **Send & End** also ends the session; the agent must not reopen it uninvited
   (`redline <file> --reopen` overrides).
+- **Delivery receipts**: every sent note shows 👀 Seen when the agent's poll takes it, 🛠️ Working
+  when the artifact changes after that, and ✅ Done when the agent replies. Before Seen it says why
+  (no agent listening, agent busy).
+- **What changed**: when the agent saves, the page reloads in place and the blocks that changed flash.
+  The comparison is between the parsed pages, so reformatting alone never counts. An **N changes**
+  chip steps through them, each agent reply links to what it changed, and a wholesale rewrite is
+  labelled instead.
+- Agent replies render a small Markdown subset: paragraphs, headings, lists, code, bold, italic, links.
+- The browser tab takes the artifact's `<title>` and icon; an artifact can update them live with
+  `window.redline.setDocumentMeta({ title, icon })`.
+- On a desktop the conversation panel can be hidden from the top bar; while hidden, the button counts
+  queued notes or marks a new reply.
 - **On a phone** (under 860px) the artifact takes the screen and the conversation is a bottom sheet:
   tap or swipe the dock up; tap the dimmed page, swipe down or press Escape to lower it.
 
@@ -76,13 +93,16 @@ input, 1 otherwise. A CLI newer than the running server replaces it; an older on
 
 | Variable | Default | |
 |---|---|---|
-| `REDLINE_STATE_DIR` | `~/.redline` | Database (`redline.db`) and `server.log` |
+| `REDLINE_STATE_DIR` | `~/.redline` | Database (`redline.db`), `attachments/` and `server.log` |
 | `REDLINE_PORT` | `4389` | Server port |
 | `REDLINE_HOST` | none | Also listen on this concrete address (overrides Tailscale detection; wildcards stay loopback) |
 | `REDLINE_LINK_HOST` | none | Host used in session links |
 | `REDLINE_ALLOWED_HOSTS` | none | Extra hostnames for the Host allowlist (whitespace-separated, `*` disables it) |
 | `REDLINE_DISCONNECT_GRACE_MS` | 5 minutes | How long a waiting poll survives every review page disconnecting; `0`/`off` never releases it |
 | `REDLINE_NO_OPEN` | none | `1` never opens a browser |
+| `REDLINE_MAX_ATTACHMENT_BYTES` | 10 MiB | Per image |
+| `REDLINE_ATTACHMENT_TTL_MS` | 7 days | Unused images expire; `0`/`off` disables |
+| `REDLINE_MAX_ATTACHMENT_DISK_MB` | `512` | Image disk budget (old unused images are evicted first); `0`/`off` disables |
 
 **Remote review.** With Tailscale running (and MagicDNS on), the server also listens on this machine's
 tailnet address and session links use its MagicDNS name, so you can review from your phone. The server

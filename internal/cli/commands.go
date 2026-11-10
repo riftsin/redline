@@ -285,7 +285,11 @@ func pollOutput(e *env, file string, status int, pr server.PollResponse) (string
 		for i, f := range pr.ArtifactFailures {
 			failures[i] = guidance.Failure{Kind: f.Kind, Detail: f.Detail}
 		}
-		b.WriteString("\nNext: " + guidance.FeedbackNextStep(file, failures, pr.SessionEnded, pr.EndedBy, e.agent) + "\n")
+		images := false
+		for _, p := range pr.Prompts {
+			images = images || len(p.Attachments) > 0
+		}
+		b.WriteString("\nNext: " + guidance.FeedbackNextStep(file, failures, pr.SessionEnded, pr.EndedBy, images, e.agent) + "\n")
 		if pr.DOMSnapshot != "" {
 			b.WriteString("\nPage outline when the user sent this:\n")
 			for _, line := range strings.Split(pr.DOMSnapshot, "\n") {
@@ -330,8 +334,18 @@ func writeFeedback(b *strings.Builder, file string, pr server.PollResponse) {
 		if p.Selector != "" && p.Kind != "message" {
 			b.WriteString("   selector: " + p.Selector + "\n")
 		}
-		for _, line := range strings.Split(strings.TrimRight(p.Prompt, "\n"), "\n") {
-			b.WriteString("   " + line + "\n")
+		if strings.TrimSpace(p.Prompt) != "" {
+			for _, line := range strings.Split(strings.TrimRight(p.Prompt, "\n"), "\n") {
+				b.WriteString("   " + line + "\n")
+			}
+		}
+		for _, a := range p.Attachments {
+			kind := strings.TrimPrefix(a.Mime, "image/")
+			fmt.Fprintf(b, "   image: %s (%s, %dx%d", a.Path, kind, a.Width, a.Height)
+			if a.Name != "" {
+				fmt.Fprintf(b, ", %q", a.Name)
+			}
+			b.WriteString(")\n")
 		}
 	}
 	if len(pr.ArtifactFailures) > 0 {

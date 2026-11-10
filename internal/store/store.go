@@ -114,4 +114,8 @@ var (
 	ErrNotFound = errors.New("no such session")
 	ErrEnded    = errors.New("session has ended")
 	ErrEmpty    = errors.New("empty text")
+
+	ErrNoQueueItem        = errors.New("no such queued note")
+	ErrTooManyAttachments = errors.New("too many images on one note")
+	ErrAttachmentGone     = errors.New("an attached image no longer exists")
 )

@@ -682,6 +682,339 @@ textarea:disabled {
   color: var(--danger);
 }
 
+/* Queued note actions and in-place editing */
+
+.queued-actions {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.queued-actions .remove {
+  margin-left: 0;
+}
+
+.edit {
+  display: inline-grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.edit:hover {
+  color: var(--text);
+}
+
+.queued-bubble.is-editing .queued-actions {
+  display: none;
+}
+
+.edit-note {
+  min-height: 48px;
+  margin-top: 4px;
+  background: var(--surface);
+}
+
+.edit-hint {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* Delivery receipts */
+
+.receipt {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.receipt .step {
+  filter: grayscale(1);
+  opacity: 0.32;
+}
+
+.receipt .step.done {
+  filter: none;
+  opacity: 1;
+}
+
+.receipt-pending {
+  order: -1;
+  margin-right: auto;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* Agent replies (Markdown subset) */
+
+.markdown {
+  white-space: normal;
+}
+
+.markdown p,
+.markdown ul,
+.markdown ol,
+.markdown pre {
+  margin: 0 0 var(--space-2);
+}
+
+.markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown ul,
+.markdown ol {
+  padding-left: 1.25em;
+}
+
+.markdown .chat-h {
+  font-weight: 650;
+}
+
+.markdown pre {
+  padding: var(--space-2);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+  overflow-x: auto;
+  font-size: 12.5px;
+}
+
+.markdown pre code {
+  padding: 0;
+  background: none;
+}
+
+.markdown a {
+  color: var(--accent);
+}
+
+/* What the agent changed */
+
+.changes {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border: 1px solid var(--accent-line);
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.changes-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentcolor;
+}
+
+.changes.is-rewrite {
+  border-color: var(--border);
+  background: transparent;
+  color: var(--muted);
+}
+
+.changes-link {
+  margin-left: auto;
+  padding: 0 7px;
+  border: 1px solid var(--accent-line);
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.changes-link.changes-rewrite {
+  border-color: var(--border);
+  background: transparent;
+  color: var(--muted);
+  font-weight: 500;
+  cursor: default;
+}
+
+/* Collapsible conversation (desktop) */
+
+.sidebar-toggle {
+  position: relative;
+}
+
+.sidebar-toggle svg {
+  fill: none;
+}
+
+.sidebar-badge {
+  position: absolute;
+  top: 1px;
+  right: 0;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+
+.sidebar-badge.is-dot {
+  top: 4px;
+  right: 4px;
+  min-width: 8px;
+  height: 8px;
+  padding: 0;
+}
+
+.review.panel-collapsed .panel {
+  display: none;
+}
+
+/* Image attachments */
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.attach {
+  display: inline-grid;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.attach:hover,
+.attach:focus-within {
+  border-color: var(--muted);
+  color: var(--text);
+}
+
+.composer-actions .attach {
+  margin-right: auto;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 3px 4px 3px 3px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  font-size: 12px;
+}
+
+.chip-error {
+  border-color: var(--danger);
+}
+
+.chip-thumb {
+  width: 28px;
+  height: 28px;
+  border-radius: 5px;
+  object-fit: cover;
+  background: var(--border);
+}
+
+.chip-name {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chip-status {
+  color: var(--muted);
+}
+
+.chip-error .chip-status {
+  color: var(--danger);
+}
+
+.chip-remove {
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.thumbs {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.thumb img {
+  display: block;
+  width: 72px;
+  height: 72px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  object-fit: cover;
+}
+
+.thumb-expired {
+  display: grid;
+  width: 72px;
+  height: 72px;
+  place-items: center;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  text-align: center;
+}
+
+.is-drop-target {
+  outline: 2px dashed var(--accent);
+  outline-offset: -4px;
+}
+
 /* Phone layout: the artifact takes the screen; the conversation is a bottom
    sheet over it, collapsed to a dock. The sheet moves with a transform, never
    a height change, so its contents keep their layout while it slides. */
@@ -706,8 +1039,17 @@ textarea:disabled {
 
   .file-name,
   .review-topbar .presence,
+  .sidebar-toggle,
   .card-actions .hint {
     display: none;
+  }
+
+  .review.panel-collapsed .panel {
+    display: flex;
+  }
+
+  .review-topbar .changes {
+    padding-inline: 8px;
   }
 
   .card-actions .button.ghost {

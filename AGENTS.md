@@ -33,6 +33,9 @@ Run `scripts/check.sh` and the e2e tests before pushing.
   `hello` on start and the SDK answers with `ready` again; never rely on seeing the first `ready`.
 - Every state change goes through `review.Manager` (`internal/review/ops.go`), which publishes it on
   the bus; review pages and polls only react to bus events and re-read state.
+- SQLite has a single connection: code that runs inside a store transaction (for example
+  `SendRequest.Describe`, which resolves attached images) must never use the database, or the
+  server deadlocks.
 - The artifact is served byte-for-byte plus one `<script>` tag, in a sandboxed iframe, with the CSP
   `sandbox` header. A served artifact must never differ from the file on disk in any other way.
 

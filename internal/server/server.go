@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/riftsin/redline/internal/attachments"
 	"github.com/riftsin/redline/internal/netinfo"
 	"github.com/riftsin/redline/internal/review"
 	"github.com/riftsin/redline/web"
@@ -35,6 +36,7 @@ type Info struct {
 // Server is one running redline server.
 type Server struct {
 	m    *review.Manager
+	att  *attachments.Store // nil disables image attachments
 	plan netinfo.Plan
 	port int
 	info Info
@@ -48,9 +50,10 @@ type Server struct {
 	hosts   []string
 }
 
-// New builds a server around a review manager.
-func New(m *review.Manager, plan netinfo.Plan, port int, info Info) *Server {
-	s := &Server{m: m, plan: plan, port: port, info: info, stop: make(chan string, 1)}
+// New builds a server around a review manager. att may be nil, which
+// disables image attachments.
+func New(m *review.Manager, att *attachments.Store, plan netinfo.Plan, port int, info Info) *Server {
+	s := &Server{m: m, att: att, plan: plan, port: port, info: info, stop: make(chan string, 1)}
 	s.handler = s.guard(s.routes())
 	return s
 }
@@ -87,6 +90,11 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /events/{key}", s.events)
 	mux.HandleFunc("POST /api/{key}/queue", s.enqueue)
 	mux.HandleFunc("POST /api/{key}/queue/{id}/remove", s.removeQueued)
+	mux.HandleFunc("POST /api/{key}/queue/{id}/edit", s.editQueued)
+	mux.HandleFunc("POST /api/{key}/attachments", s.uploadAttachment)
+	mux.HandleFunc("GET /attachments/{id}", s.attachment)
+	mux.HandleFunc("GET /api/{key}/sources", s.sources)
+	mux.HandleFunc("POST /api/{key}/changes", s.recordChange)
 	mux.HandleFunc("POST /api/{key}/send", s.send)
 	mux.HandleFunc("POST /api/{key}/end", s.userEnd)
 	mux.HandleFunc("POST /api/{key}/artifact-failures", s.artifactFailures)

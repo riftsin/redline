@@ -409,9 +409,14 @@ func UserEndedOpenNextStep(file string) string {
 // Failure is a fatal artifact failure, for next-step texts.
 type Failure struct{ Kind, Detail string }
 
+const imageNote = "Some notes carry images the user attached: each `image:` line is an absolute local file path. Open those image files to see what the user is referring to. "
+
 // FeedbackNextStep follows delivered feedback.
-func FeedbackNextStep(file string, failures []Failure, sessionEnded bool, endedBy string, agent Agent) string {
+func FeedbackNextStep(file string, failures []Failure, sessionEnded bool, endedBy string, images bool, agent Agent) string {
 	note := failureNote(file, failures, sessionEnded, endedBy)
+	if images {
+		note += imageNote
+	}
 	switch {
 	case sessionEnded && endedBy == "user":
 		reopen := ""
@@ -424,7 +429,7 @@ func FeedbackNextStep(file string, failures []Failure, sessionEnded bool, endedB
 	}
 	prefix := note
 	if len(failures) == 0 {
-		prefix = "Apply the requested changes to " + file + ". " + editRule + " "
+		prefix = "Apply the requested changes to " + file + ". " + editRule + " " + note
 	}
 	return prefix + "Do not respond to the user just yet. If you are continuing to wait for feedback, run `redline poll " + file + " --agent-reply \"<message for the user>\"` without --timeout-ms to reply and keep polling. If instead you are handing back a result without starting another long-poll, run `redline reply " + file + " --agent-reply \"<message for the user>\"` to post it and receive an acceptance receipt. " + AgentReplyRule + " The poll waits silently until the user sends more feedback, ends the session, or leaves every review window disconnected past the reconnect grace period - never kill it. " + PollExecution(agent)
 }

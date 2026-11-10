@@ -1,6 +1,6 @@
 {{define "review"}}{{template "head" (printf "%s · redline" .Name)}}
 <body>
-<div id="review" class="review{{if .Ended}} is-ended{{end}}" data-key="{{.Key}}" data-revision="{{.Revision}}" data-artifact="{{.ArtifactPath}}">
+<div id="review" class="review{{if .Ended}} is-ended{{end}}" data-key="{{.Key}}" data-revision="{{.Revision}}" data-artifact="{{.ArtifactPath}}" data-max-images="{{.MaxImages}}">
   <header class="topbar review-topbar">
     <a href="/" class="brand" aria-label="redline home">redline</a>
     <span class="file-name" title="{{.File}}">{{.Name}}</span>
@@ -9,7 +9,12 @@
         <button type="button" class="mode active" data-mode="annotate" title="Annotate: click elements or select text to leave notes (⌘I / Ctrl+I)">Annotate</button>
         <button type="button" class="mode" data-mode="explore" title="Explore: use the page normally (⌘I / Ctrl+I)">Explore</button>
       </div>
+      <button type="button" class="changes" id="changes-chip" hidden title="Show what the agent changed in the latest save"><span class="changes-dot" aria-hidden="true"></span><span id="changes-label"></span></button>
       {{template "presence" .}}
+      <button type="button" class="icon-button sidebar-toggle" id="sidebar-toggle" aria-controls="panel" aria-expanded="true" title="Hide the conversation">
+        <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M10 3v10" stroke="currentColor" stroke-width="1.4"/></svg>
+        <span class="sidebar-badge" id="sidebar-badge" hidden></span>
+      </button>
       <div class="menu">
         <button type="button" class="icon-button" id="menu-button" aria-label="More actions" aria-haspopup="menu" aria-expanded="false">
           <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="3" cy="8" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="13" cy="8" r="1.5"/></svg>
@@ -51,8 +56,10 @@
           <span class="card-title" id="card-title"></span>
           <span class="card-excerpt" id="card-excerpt"></span>
         </div>
-        <textarea id="annotation-note" rows="3" placeholder="What should change here?" aria-label="Note"></textarea>
+        <textarea id="annotation-note" rows="3" placeholder="What should change here?" aria-label="Note" data-images="card"></textarea>
+        <div class="chips" data-chips="card" hidden></div>
         <div class="card-actions">
+          {{template "attach" "card"}}
           <span class="hint" id="card-hint" title="Enter queues the note; Ctrl+Enter queues it and sends everything">Ctrl+↵ also sends</span>
           <button type="button" class="button ghost" id="card-cancel">Cancel</button>
           <button type="submit" class="button">Queue note</button>
@@ -61,9 +68,11 @@
 
       <form id="composer" class="composer">
         {{template "agent-banner" .}}
-        <textarea id="composer-input" rows="3" placeholder="Write a message for the agent…" aria-label="Message for the agent"></textarea>
+        <textarea id="composer-input" rows="3" placeholder="Write a message for the agent…" aria-label="Message for the agent" data-images="composer"></textarea>
+        <div class="chips" data-chips="composer" hidden></div>
         <p class="form-error" id="composer-error" role="alert" hidden></p>
         <div class="composer-actions">
+          {{template "attach" "composer"}}
           <button type="button" class="button danger-outline" id="send-end" title="Send queued notes and end the review">Send &amp; End</button>
           <button type="submit" class="button primary" id="send">Send to Agent</button>
         </div>
@@ -75,3 +84,5 @@
 </body>
 </html>
 {{end}}
+
+{{define "attach"}}<label class="attach" title="Attach images (PNG, JPEG, WebP) - or paste or drop them"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M10.5 4.5 5.2 9.8a1.6 1.6 0 0 0 2.3 2.3l5.6-5.6a3 3 0 0 0-4.3-4.3L3.3 7.7a4.4 4.4 0 0 0 6.2 6.2l4-4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg><span class="sr-only">Attach images</span><input type="file" class="sr-only" accept="image/png,image/jpeg,image/webp" multiple data-attach="{{.}}"></label>{{end}}

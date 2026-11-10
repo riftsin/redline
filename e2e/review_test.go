@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/riftsin/redline/internal/attachments"
 	"github.com/riftsin/redline/internal/netinfo"
 	"github.com/riftsin/redline/internal/paths"
 	"github.com/riftsin/redline/internal/review"
@@ -55,8 +56,13 @@ func newReview(t *testing.T, htmlAttrs string) *reviewEnv {
 		t.Fatal(err)
 	}
 	m := review.NewManager(st, time.Minute)
+	att, err := attachments.Open(filepath.Join(dir, "attachments"), st, attachments.DefaultLimits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Attachments = att
 	plan := netinfo.Resolve(func(string) string { return "" }, func() []byte { return nil })
-	s := server.New(m, plan, 0, server.Info{Version: "e2e"})
+	s := server.New(m, att, plan, 0, server.Info{Version: "e2e"})
 	srv := httptest.NewServer(s.Handler())
 	t.Cleanup(func() { srv.Close(); m.Close(); st.Close() })
 
@@ -91,21 +97,23 @@ func (r *reviewEnv) waitFrameReady() {
 	r.page.WaitFor("document.getElementById('review').dataset.frameReady === 'true'")
 }
 
-// poll runs the agent's poll in the background.
+// poll runs the agent's poll in the background and returns once it waits
+// or has already delivered feedback.
 func (r *reviewEnv) poll() <-chan store.Feedback {
 	out := make(chan store.Feedback, 1)
+	waiting := make(chan struct{})
 	go func() {
-		_, _ = r.m.Poll(context.Background(), review.PollRequest{Key: r.key, File: r.file}, func(fb store.Feedback) error {
+		_, _ = r.m.Poll(context.Background(), review.PollRequest{Key: r.key, File: r.file, Waiting: func() { close(waiting) }}, func(fb store.Feedback) error {
 			out <- fb
 			return nil
 		})
 	}()
-	deadline := time.Now().Add(DefaultTimeout)
-	for r.m.Presence(r.key).State != review.Listening {
-		if time.Now().After(deadline) {
-			r.t.Fatal("poll did not start")
-		}
-		time.Sleep(10 * time.Millisecond)
+	select {
+	case <-waiting:
+	case fb := <-out:
+		out <- fb
+	case <-time.After(DefaultTimeout):
+		r.t.Fatal("poll neither waited nor delivered")
 	}
 	return out
 }

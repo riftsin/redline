@@ -87,7 +87,7 @@ func TestPollWakesOnSendAndMarksWorking(t *testing.T) {
 		t.Fatalf("presence while waiting = %+v", p)
 	}
 
-	if _, err := f.m.Send(ctx, f.key, "make it blue", "", false); err != nil {
+	if _, err := f.m.Send(ctx, store.SendRequest{Key: f.key, Message: "make it blue"}); err != nil {
 		t.Fatal(err)
 	}
 	r := await(t, done)
@@ -118,7 +118,7 @@ func TestPollWakesOnSendAndMarksWorking(t *testing.T) {
 func TestPollReturnsQueuedFeedbackImmediately(t *testing.T) {
 	f := newFixture(t, time.Minute)
 	ctx := context.Background()
-	if _, err := f.m.Send(ctx, f.key, "already sent", "", false); err != nil {
+	if _, err := f.m.Send(ctx, store.SendRequest{Key: f.key, Message: "already sent"}); err != nil {
 		t.Fatal(err)
 	}
 	r := await(t, f.startPoll(t, ctx, PollRequest{}))
@@ -145,7 +145,7 @@ func TestSecondPollRefusedUnlessTakeover(t *testing.T) {
 	if p := f.m.Presence(f.key); p.Owner != "second" {
 		t.Fatalf("the displaced poll's exit must not clear the new holder: %+v", p)
 	}
-	if _, err := f.m.Send(ctx, f.key, "for the second", "", false); err != nil {
+	if _, err := f.m.Send(ctx, store.SendRequest{Key: f.key, Message: "for the second"}); err != nil {
 		t.Fatal(err)
 	}
 	if r := await(t, second); r.res.Outcome != OutcomeFeedback {
@@ -156,7 +156,7 @@ func TestSecondPollRefusedUnlessTakeover(t *testing.T) {
 func TestFailedDeliveryIsRestored(t *testing.T) {
 	f := newFixture(t, time.Minute)
 	ctx := context.Background()
-	if _, err := f.m.Send(ctx, f.key, "do not lose me", "", false); err != nil {
+	if _, err := f.m.Send(ctx, store.SendRequest{Key: f.key, Message: "do not lose me"}); err != nil {
 		t.Fatal(err)
 	}
 	_, err := f.m.Poll(ctx, PollRequest{Key: f.key, File: f.file}, func(store.Feedback) error { return errors.New("broken pipe") })

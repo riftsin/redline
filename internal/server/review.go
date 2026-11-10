@@ -4,12 +4,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/riftsin/redline/internal/attachments"
 	"github.com/riftsin/redline/internal/review"
 	"github.com/riftsin/redline/internal/store"
 )
@@ -96,7 +100,8 @@ func regionsFor(ev review.EventType) []string {
 	case review.TranscriptChanged:
 		return []string{regionConversation}
 	case review.PresenceChanged:
-		return []string{regionPresence, regionAgentBanner, regionDockSummary}
+		// Undelivered notes say why they are not Seen yet, from presence.
+		return []string{regionConversation, regionPresence, regionAgentBanner, regionDockSummary}
 	case review.SessionChanged:
 		return allRegions
 	}
@@ -229,13 +234,14 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 // noteRequest is a note from the annotation card, or an answer the artifact
 // queued through window.redline.queuePrompt.
 type noteRequest struct {
-	Kind     string          `json:"kind"`
-	Prompt   string          `json:"prompt"`
-	Selector string          `json:"selector"`
-	Tag      string          `json:"tag"`
-	Text     string          `json:"text"`
-	Target   json.RawMessage `json:"target"`
-	QueueKey string          `json:"queueKey"`
+	Kind        string                `json:"kind"`
+	Prompt      string                `json:"prompt"`
+	Selector    string                `json:"selector"`
+	Tag         string                `json:"tag"`
+	Text        string                `json:"text"`
+	Target      json.RawMessage       `json:"target"`
+	QueueKey    string                `json:"queueKey"`
+	Attachments []store.AttachmentRef `json:"attachments"`
 }
 
 func (s *Server) enqueue(w http.ResponseWriter, r *http.Request) {
@@ -253,6 +259,7 @@ func (s *Server) enqueue(w http.ResponseWriter, r *http.Request) {
 	id, err := s.m.Enqueue(r.Context(), store.QueueItem{
 		SessionKey: sess.Key, Kind: body.Kind, Prompt: body.Prompt, Selector: body.Selector,
 		Tag: body.Tag, Excerpt: body.Text, Target: body.Target, QueueKey: body.QueueKey,
+		Attachments: body.Attachments,
 	})
 	if s.actionError(w, err) {
 		return
@@ -282,14 +289,17 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Message  string `json:"message"`
-		Snapshot string `json:"snapshot"`
-		End      bool   `json:"end"`
+		Message     string                `json:"message"`
+		Attachments []store.AttachmentRef `json:"attachments"`
+		Snapshot    string                `json:"snapshot"`
+		End         bool                  `json:"end"`
 	}
 	if !readJSON(w, r, &body) {
 		return
 	}
-	res, err := s.m.Send(r.Context(), sess.Key, body.Message, body.Snapshot, body.End)
+	res, err := s.m.Send(r.Context(), store.SendRequest{
+		Key: sess.Key, Message: body.Message, MessageAttachments: body.Attachments, Snapshot: body.Snapshot, End: body.End,
+	})
 	if s.actionError(w, err) {
 		return
 	}
@@ -336,8 +346,141 @@ func (s *Server) actionError(w http.ResponseWriter, err error) bool {
 		writeError(w, http.StatusConflict, "ENDED", "this review session has ended")
 	case errors.Is(err, store.ErrNotFound):
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "no such review session")
+	case errors.Is(err, store.ErrNoQueueItem):
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "that note was already sent or removed")
+	case errors.Is(err, store.ErrTooManyAttachments):
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", fmt.Sprintf("attach at most %d images to one note", store.MaxAttachmentsPerPrompt))
+	case errors.Is(err, store.ErrAttachmentGone):
+		writeError(w, http.StatusConflict, "ATTACHMENT_GONE", "an attached image expired; remove it and attach it again")
 	default:
 		writeError(w, http.StatusInternalServerError, "SERVER_ERROR", err.Error())
 	}
 	return true
+}
+
+func (s *Server) editQueued(w http.ResponseWriter, r *http.Request) {
+	sess, ok := s.session(w, r)
+	if !ok {
+		return
+	}
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "bad queue item id")
+		return
+	}
+	var body struct {
+		Prompt string `json:"prompt"`
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	if strings.TrimSpace(body.Prompt) == "" {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "a note cannot be empty; remove it instead")
+		return
+	}
+	if s.actionError(w, s.m.EditQueued(r.Context(), sess.Key, id, body.Prompt)) {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "edited"})
+}
+
+// uploadAttachment stores one image sent as the raw request body. The
+// declared content type is ignored: the bytes decide.
+func (s *Server) uploadAttachment(w http.ResponseWriter, r *http.Request) {
+	sess, ok := s.session(w, r)
+	if !ok {
+		return
+	}
+	if sess.Status == store.StatusEnded {
+		writeError(w, http.StatusConflict, "ENDED", "this review session has ended")
+		return
+	}
+	if s.att == nil {
+		writeError(w, http.StatusServiceUnavailable, "UNAVAILABLE", "image attachments are not available")
+		return
+	}
+	if r.ContentLength > s.att.Limits().MaxBytes {
+		// Refuse before reading, but drain a little so the browser sees the answer.
+		_, _ = io.CopyN(io.Discard, r.Body, 1<<16)
+		writeError(w, http.StatusRequestEntityTooLarge, "TOO_LARGE", tooLarge(s.att.Limits().MaxBytes))
+		return
+	}
+	a, err := s.att.Save(r.Context(), r.Body)
+	switch {
+	case errors.Is(err, attachments.ErrTooLarge):
+		writeError(w, http.StatusRequestEntityTooLarge, "TOO_LARGE", tooLarge(s.att.Limits().MaxBytes))
+		return
+	case errors.Is(err, attachments.ErrUnsupported):
+		writeError(w, http.StatusUnsupportedMediaType, "UNSUPPORTED", attachments.ErrUnsupported.Error())
+		return
+	case errors.Is(err, attachments.ErrDiskFull):
+		writeError(w, http.StatusInsufficientStorage, "DISK_FULL", "the image store is full; remove queued images or try later")
+		return
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, "SERVER_ERROR", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"id": a.ID, "mime": a.Mime, "width": a.Width, "height": a.Height, "bytes": a.Bytes, "url": "/attachments/" + a.ID})
+}
+
+func tooLarge(max int64) string {
+	return fmt.Sprintf("images can be at most %d MB", max>>20)
+}
+
+func (s *Server) attachment(w http.ResponseWriter, r *http.Request) {
+	if s.att == nil {
+		http.NotFound(w, r)
+		return
+	}
+	path, a, err := s.att.Path(r.Context(), r.PathValue("id"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer f.Close()
+	h := w.Header()
+	h.Set("Content-Type", a.Mime)
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("Cache-Control", "private, max-age=604800, immutable")
+	h.Set("Content-Security-Policy", "default-src 'none'")
+	http.ServeContent(w, r, "", a.CreatedAt, f)
+}
+
+// sources gives the review page the artifact before and after its latest
+// change, so it can measure what changed.
+func (s *Server) sources(w http.ResponseWriter, r *http.Request) {
+	sess, ok := s.session(w, r)
+	if !ok {
+		return
+	}
+	src := s.m.Sources(sess.Key)
+	writeJSON(w, http.StatusOK, map[string]any{"revision": src.Revision, "previous": src.Previous, "current": src.Current})
+}
+
+func (s *Server) recordChange(w http.ResponseWriter, r *http.Request) {
+	sess, ok := s.session(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Revision  int      `json:"revision"`
+		Selectors []string `json:"selectors"`
+		Rewrite   bool     `json:"rewrite"`
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	if body.Revision < 1 || body.Revision > sess.ArtifactRevision {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "unknown revision")
+		return
+	}
+	if s.actionError(w, s.m.RecordChange(r.Context(), sess.Key, store.Change{Revision: body.Revision, Selectors: body.Selectors, Rewrite: body.Rewrite})) {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "recorded"})
 }

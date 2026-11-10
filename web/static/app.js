@@ -4,8 +4,8 @@
 // regions that change (conversation, presence, banners) over the
 // /events/{key} stream; this script swaps them in and turns the reviewer's
 // actions into POSTs. The only state kept here is per tab and never
-// re-rendered by the server: the interaction mode, the open annotation card
-// and the composer's text.
+// re-rendered by the server: the interaction mode, the open annotation card,
+// a note being edited, images being attached and the composer's text.
 (() => {
   "use strict";
 
@@ -13,6 +13,7 @@
   if (!root) return;
 
   const key = root.dataset.key;
+  const maxImages = Number(root.dataset.maxImages || 4);
   const frame = document.getElementById("artifact");
   const card = document.getElementById("annotation-card");
   const cardTitle = document.getElementById("card-title");
@@ -23,11 +24,18 @@
   const composerError = document.getElementById("composer-error");
   const sendButton = document.getElementById("send");
   const sendEndButton = document.getElementById("send-end");
+  const queueButton = card.querySelector("button[type=submit]");
   const panelScroll = document.getElementById("panel-scroll");
   const menuButton = document.getElementById("menu-button");
   const menu = document.getElementById("menu");
+  const changesChip = document.getElementById("changes-chip");
+  const changesLabel = document.getElementById("changes-label");
+  const sidebarToggle = document.getElementById("sidebar-toggle");
+  const sidebarBadge = document.getElementById("sidebar-badge");
+  const fileName = document.querySelector(".file-name").textContent;
+  const IS_MAC = /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent || "");
 
-  if (/Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent || "")) {
+  if (IS_MAC) {
     const hint = document.getElementById("card-hint");
     hint.textContent = "⌘↵ also sends";
     hint.title = "Enter queues the note; ⌘↵ queues it and sends everything";
@@ -44,15 +52,24 @@
     frameReady: false,
     scrollY: 0,
     restoreY: null,
+    // The revision the frame shows, and whether it was reloaded because the
+    // agent changed the file (then its changes are measured).
+    shownRevision: Number(root.dataset.revision || 0),
+    measure: false,
     pending: null, // what the open annotation card is attached to
     sending: false,
     confirmEnd: false,
+    // A queued note being edited in place, and a conversation update that
+    // arrived meanwhile (applied when the edit ends).
+    editing: null,
+    deferredConversation: null,
+    changes: null, // {selectors, rewrite, index}
   };
 
   // -- Server calls -----------------------------------------------------------
 
-  async function api(path, body) {
-    const response = await fetch("/api/" + encodeURIComponent(key) + path, {
+  async function api(path, body, init) {
+    const response = await fetch("/api/" + encodeURIComponent(key) + path, init || {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body || {}),
@@ -82,7 +99,10 @@
     const source = new EventSource("/events/" + encodeURIComponent(key));
     source.addEventListener("state", (event) => applyState(JSON.parse(event.data)));
     source.addEventListener("region", (event) => swapRegion(JSON.parse(event.data)));
-    source.addEventListener("reload", (event) => reloadFrame(JSON.parse(event.data).src));
+    source.addEventListener("reload", (event) => {
+      const data = JSON.parse(event.data);
+      if (data.revision !== state.shownRevision) reloadFrame(data.src, true);
+    });
     source.addEventListener("open", () => root.classList.remove("is-offline"));
     source.addEventListener("error", () => {
       // EventSource reconnects by itself; the server resyncs on reconnect.
@@ -92,6 +112,7 @@
 
   function applyState(next) {
     state.queued = next.queued;
+    state.revision = next.revision;
     if (next.ended !== state.ended) {
       state.ended = next.ended;
       root.classList.toggle("is-ended", state.ended);
@@ -101,9 +122,15 @@
       }
     }
     updateControls();
+    updateSidebarBadge();
   }
 
   function swapRegion({ id, html }) {
+    if (id === "conversation" && state.editing) {
+      // Never pull a note out from under the reviewer's cursor.
+      state.deferredConversation = html;
+      return;
+    }
     const current = document.getElementById(id);
     if (!current) return;
     const pinned = id === "conversation" && isPinned();
@@ -113,11 +140,18 @@
     if (!replacement) return;
     current.replaceWith(replacement);
     if (pinned) panelScroll.scrollTop = panelScroll.scrollHeight;
-    if (id === "conversation") {
-      const replies = replacement.querySelectorAll(".bubble.agent").length;
-      if (replies > agentReplies && PHONE.matches && !sheetOpen()) document.documentElement.classList.add("has-unread");
-      agentReplies = replies;
+    if (id === "conversation") noteReplies(replacement);
+  }
+
+  // A reply that arrives while the conversation is out of sight marks it.
+  function noteReplies(conversation) {
+    const replies = conversation.querySelectorAll(".bubble.agent").length;
+    if (replies > agentReplies) {
+      if (PHONE.matches && !sheetOpen()) document.documentElement.classList.add("has-unread");
+      if (!PHONE.matches && root.classList.contains("panel-collapsed")) state.unread = true;
     }
+    agentReplies = replies;
+    updateSidebarBadge();
   }
 
   // The conversation follows new entries unless the reviewer scrolled up.
@@ -126,11 +160,13 @@
   }
 
   function updateControls() {
+    const uploading = images.card.some((i) => i.status === "uploading") || images.composer.some((i) => i.status === "uploading");
     const disabled = state.ended || state.sending;
     composerInput.disabled = disabled;
-    sendButton.disabled = disabled;
-    sendEndButton.disabled = disabled;
-    sendButton.textContent = state.sending ? "Sending…" : "Send to Agent";
+    sendButton.disabled = disabled || uploading;
+    sendEndButton.disabled = disabled || uploading;
+    queueButton.disabled = uploading;
+    sendButton.textContent = state.sending ? "Sending…" : uploading ? "Uploading…" : "Send to Agent";
     for (const button of root.querySelectorAll(".mode")) button.disabled = state.ended;
     const end = menu.querySelector("[data-action=end]");
     end.hidden = state.ended;
@@ -144,10 +180,17 @@
     if (frame.contentWindow) frame.contentWindow.postMessage({ redline: true, type, payload: payload || {} }, "*");
   }
 
-  function reloadFrame(src) {
+  function revisionOf(src) {
+    const rev = Number(new URL(src, location.href).searchParams.get("rev"));
+    return Number.isFinite(rev) ? rev : state.shownRevision;
+  }
+
+  function reloadFrame(src, measure) {
     // Keep the reviewer's place across the agent's edits.
     state.restoreY = state.scrollY;
     state.frameReady = false;
+    state.measure = Boolean(measure);
+    state.shownRevision = revisionOf(src);
     delete root.dataset.frameReady;
     frame.src = src;
   }
@@ -186,6 +229,84 @@
     });
   }
 
+  // After the agent changed the file, the artifact compares the version the
+  // reviewer saw with the new one and flashes what changed.
+  async function measureChanges(revision) {
+    let sources;
+    try {
+      sources = await (await fetch("/api/" + encodeURIComponent(key) + "/sources")).json();
+    } catch (_error) {
+      return;
+    }
+    if (!sources.previous || sources.revision !== revision) return;
+    toFrame("diff", { revision, previous: sources.previous, current: sources.current });
+  }
+
+  function showChanges(payload) {
+    const selectors = Array.isArray(payload.selectors) ? payload.selectors.filter((s) => typeof s === "string") : [];
+    const rewrite = Boolean(payload.rewrite);
+    if (!rewrite && selectors.length === 0) {
+      changesChip.hidden = true;
+      state.changes = null;
+    } else {
+      state.changes = { selectors, rewrite, index: 0 };
+      renderChangesChip();
+      changesChip.hidden = false;
+    }
+    api("/changes", { revision: payload.revision, selectors, rewrite }).catch(() => {});
+  }
+
+  function renderChangesChip() {
+    const c = state.changes;
+    changesChip.classList.toggle("is-rewrite", c.rewrite);
+    changesChip.disabled = c.rewrite;
+    if (c.rewrite) changesLabel.textContent = "Page rewritten";
+    else if (c.index === 0) changesLabel.textContent = c.selectors.length + (c.selectors.length === 1 ? " change" : " changes");
+    else changesLabel.textContent = "Change " + c.index + " of " + c.selectors.length;
+  }
+
+  changesChip.addEventListener("click", () => {
+    const c = state.changes;
+    if (!c || c.rewrite || c.selectors.length === 0) return;
+    c.index = (c.index % c.selectors.length) + 1;
+    renderChangesChip();
+    toFrame("reveal", { selector: c.selectors[c.index - 1] });
+  });
+
+  // -- Tab title and icon ---------------------------------------------------------
+
+  const iconLink = document.querySelector("link[rel=icon]");
+  const defaultIcon = iconLink.getAttribute("href");
+  const meta = { loadTitle: "", loadIcon: "", title: null, icon: null };
+
+  // Only the artifact's own files or inline images may become the tab icon.
+  function safeIcon(value) {
+    if (typeof value !== "string" || value === "") return "";
+    if (/^data:image\/(png|gif|jpeg|webp|svg\+xml|x-icon|vnd\.microsoft\.icon)[;,]/i.test(value)) return value;
+    try {
+      const url = new URL(value, location.href);
+      if (url.origin === location.origin && url.pathname.startsWith("/artifact/" + key + "/")) return url.pathname + url.search;
+    } catch (_error) {
+      // Not a URL.
+    }
+    return "";
+  }
+
+  function applyMeta() {
+    const title = (meta.title !== null ? meta.title : meta.loadTitle).trim();
+    document.title = (title || fileName) + " · redline";
+    iconLink.setAttribute("href", (meta.icon !== null ? meta.icon : meta.loadIcon) || defaultIcon);
+  }
+
+  function updateMeta(payload) {
+    if ("title" in payload) {
+      const t = payload.title;
+      meta.title = t === null || (typeof t === "string" && t.trim() === "") ? null : String(t).slice(0, 200);
+    }
+    if ("icon" in payload) meta.icon = payload.icon === null ? null : safeIcon(payload.icon) || null;
+    applyMeta();
+  }
+
   window.addEventListener("message", (event) => {
     if (event.source !== frame.contentWindow) return;
     const data = event.data;
@@ -193,7 +314,8 @@
     const payload = data.payload && typeof data.payload === "object" ? data.payload : {};
 
     switch (data.type) {
-      case "ready":
+      case "ready": {
+        const firstReady = !state.frameReady;
         state.frameReady = true;
         root.dataset.frameReady = "true";
         setMode(state.modeChosen ? state.mode : payload.annotate, false);
@@ -202,7 +324,15 @@
           toFrame("restore-scroll", { y: state.restoreY });
           state.restoreY = null;
         }
+        meta.loadTitle = typeof payload.title === "string" ? payload.title.slice(0, 200) : "";
+        meta.loadIcon = safeIcon(payload.icon);
+        applyMeta();
+        if (firstReady && state.measure) {
+          state.measure = false;
+          measureChanges(state.shownRevision);
+        }
         break;
+      }
       case "scroll":
         state.scrollY = Number(payload.y) || 0;
         break;
@@ -221,6 +351,12 @@
         }
         break;
       }
+      case "changes":
+        if (payload.revision === state.shownRevision) showChanges(payload);
+        break;
+      case "meta":
+        updateMeta(payload);
+        break;
       case "toggle-mode":
         if (!state.ended) setMode(state.mode === "annotate" ? "explore" : "annotate", true);
         break;
@@ -238,14 +374,149 @@
     }
   });
 
+  // -- Images ---------------------------------------------------------------------
+  //
+  // Images are uploaded as soon as they are attached; a note or message
+  // carries the references. "card" is the annotation card, "composer" the
+  // message box.
+
+  const IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp"];
+  const images = { card: [], composer: [] };
+  let imageSeq = 0;
+
+  function readyRefs(where) {
+    return images[where].filter((i) => i.status === "ready").map((i) => ({ id: i.id, name: i.name }));
+  }
+
+  function clearImages(where) {
+    for (const i of images[where]) if (i.preview) URL.revokeObjectURL(i.preview);
+    images[where] = [];
+    renderChips(where);
+  }
+
+  function renderChips(where) {
+    const box = document.querySelector("[data-chips=" + where + "]");
+    box.textContent = "";
+    for (const img of images[where]) {
+      const chip = document.createElement("div");
+      chip.className = "chip" + (img.status === "error" ? " chip-error" : "");
+      const thumb = document.createElement("img");
+      thumb.className = "chip-thumb";
+      thumb.alt = "";
+      if (img.preview) thumb.src = img.preview;
+      const name = document.createElement("span");
+      name.className = "chip-name";
+      name.textContent = img.name;
+      name.title = img.name;
+      chip.append(thumb, name);
+      if (img.status !== "ready") {
+        const status = document.createElement("span");
+        status.className = "chip-status";
+        status.textContent = img.status === "uploading" ? "Uploading…" : img.message;
+        chip.append(status);
+      }
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "chip-remove";
+      remove.setAttribute("aria-label", "Remove " + img.name);
+      remove.textContent = "×";
+      remove.addEventListener("click", () => {
+        if (img.preview) URL.revokeObjectURL(img.preview);
+        images[where] = images[where].filter((i) => i !== img);
+        renderChips(where);
+        updateControls();
+      });
+      chip.append(remove);
+      box.append(chip);
+    }
+    box.hidden = images[where].length === 0;
+  }
+
+  async function addImages(where, files) {
+    for (const file of files) {
+      if (images[where].length >= maxImages) {
+        showError("Attach at most " + maxImages + " images to one note or message.");
+        break;
+      }
+      const img = { local: ++imageSeq, name: file.name || "pasted image", status: "uploading", preview: URL.createObjectURL(file) };
+      if (!IMAGE_TYPES.includes(file.type)) {
+        img.status = "error";
+        img.message = "Not a PNG, JPEG or WebP image";
+      }
+      images[where].push(img);
+      renderChips(where);
+      updateControls();
+      if (img.status === "error") continue;
+      try {
+        const data = await api("/attachments", null, { method: "POST", body: file });
+        img.id = data.id;
+        img.status = "ready";
+      } catch (error) {
+        img.status = "error";
+        img.message = error.message;
+      }
+      renderChips(where);
+      updateControls();
+    }
+  }
+
+  function imageFiles(list) {
+    return Array.from(list || []).filter((f) => f.type.startsWith("image/"));
+  }
+
+  for (const input of root.querySelectorAll("[data-attach]")) {
+    input.addEventListener("change", () => {
+      addImages(input.dataset.attach, Array.from(input.files || []));
+      input.value = "";
+    });
+  }
+
+  // Pasting images into a text box attaches them. Text pasted alongside is
+  // kept; a copied file's own name, which some systems put on the clipboard
+  // as text, is not.
+  for (const box of root.querySelectorAll("textarea[data-images]")) {
+    box.addEventListener("paste", (event) => {
+      const files = imageFiles(event.clipboardData && event.clipboardData.files);
+      if (files.length === 0) return;
+      addImages(box.dataset.images, files);
+      const text = (event.clipboardData.getData("text/plain") || "").trim();
+      if (text === "" || files.some((f) => f.name && text.endsWith(f.name))) event.preventDefault();
+    });
+  }
+
+  for (const [form, where] of [[card, "card"], [composer, "composer"]]) {
+    form.addEventListener("dragover", (event) => {
+      if (!event.dataTransfer || !Array.from(event.dataTransfer.types).includes("Files")) return;
+      event.preventDefault();
+      form.classList.add("is-drop-target");
+    });
+    form.addEventListener("dragleave", (event) => {
+      if (!form.contains(event.relatedTarget)) form.classList.remove("is-drop-target");
+    });
+    form.addEventListener("drop", (event) => {
+      form.classList.remove("is-drop-target");
+      const files = imageFiles(event.dataTransfer && event.dataTransfer.files);
+      if (files.length === 0) return;
+      event.preventDefault();
+      addImages(where, files);
+    });
+  }
+
   // -- Annotation card ----------------------------------------------------------
 
   function openCard(target, isText) {
     state.pending = target;
-    cardTitle.textContent = isText ? "Annotate text" : "Annotate <" + (target.tag || "element") + ">";
+    let title = isText ? "Annotate text" : "Annotate <" + (target.tag || "element") + ">";
+    const cell = target.target && target.target.type === "table-cell" ? target.target : null;
+    if (cell) {
+      const labels = [cell.rowLabel, cell.columnLabel].filter((l) => l);
+      title = labels.length ? "Annotate cell: " + labels.join(" → ") : "Annotate cell";
+    }
+    cardTitle.textContent = title;
     cardExcerpt.textContent = target.text ? "“" + target.text + "”" : "";
     card.hidden = false;
     if (PHONE.matches) setSheet(true);
+    if (root.classList.contains("panel-collapsed")) setPanel(true);
     note.focus();
   }
 
@@ -254,16 +525,19 @@
     card.hidden = true;
     note.value = "";
     state.pending = null;
+    clearImages("card");
     toFrame("clear-selection");
   }
 
   async function queueNote(andSend) {
     const target = state.pending;
     const prompt = note.value.trim();
-    if (!target || !prompt) {
+    const refs = readyRefs("card");
+    if (!target || (!prompt && refs.length === 0)) {
       note.focus();
       return;
     }
+    if (images.card.some((i) => i.status === "uploading")) return;
     try {
       await api("/queue", {
         kind: "annotation",
@@ -272,6 +546,7 @@
         tag: target.tag || "",
         text: target.text || "",
         target: target.target || null,
+        attachments: refs,
       });
       closeCard();
       showError("");
@@ -320,12 +595,14 @@
 
   async function send(end) {
     if (state.sending || state.ended) return;
+    if (images.composer.some((i) => i.status === "uploading")) return;
     state.sending = true;
     updateControls();
     try {
       const snapshot = await requestSnapshot();
-      await api("/send", { message: composerInput.value, snapshot, end });
+      await api("/send", { message: composerInput.value, attachments: readyRefs("composer"), snapshot, end });
       composerInput.value = "";
+      clearImages("composer");
       showError("");
     } catch (error) {
       showError(error.message);
@@ -360,10 +637,85 @@
 
   // -- Conversation -------------------------------------------------------------
 
+  // Editing a queued note happens in place: Enter saves, Shift+Enter is a
+  // newline, Escape discards the edit.
+  function startEdit(id) {
+    if (state.editing) return;
+    const bubble = panelScroll.querySelector(".queued-bubble[data-id='" + CSS.escape(id) + "']");
+    const text = bubble && bubble.querySelector("[data-prompt]");
+    if (!text) return;
+    const box = document.createElement("textarea");
+    box.className = "edit-note";
+    box.rows = 3;
+    box.value = text.textContent;
+    box.setAttribute("aria-label", "Edit note");
+    const hint = document.createElement("p");
+    hint.className = "edit-hint";
+    hint.textContent = "Enter saves · Esc discards";
+    text.replaceWith(box);
+    box.after(hint);
+    bubble.classList.add("is-editing");
+    state.editing = { id, box };
+    box.focus();
+    box.setSelectionRange(box.value.length, box.value.length);
+
+    const finish = () => {
+      state.editing = null;
+      if (state.deferredConversation !== null) {
+        const html = state.deferredConversation;
+        state.deferredConversation = null;
+        swapRegion({ id: "conversation", html });
+      } else {
+        bubble.classList.remove("is-editing");
+        hint.remove();
+        box.replaceWith(text);
+      }
+    };
+    box.addEventListener("keydown", async (event) => {
+      if (event.isComposing || event.keyCode === 229) return;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        finish();
+      } else if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        const prompt = box.value.trim();
+        if (!prompt) return;
+        try {
+          await api("/queue/" + encodeURIComponent(id) + "/edit", { prompt });
+          text.textContent = prompt;
+          showError("");
+        } catch (error) {
+          showError(error.message);
+        }
+        finish();
+      }
+    });
+    box.addEventListener("blur", () => {
+      if (state.editing && state.editing.box === box) finish();
+    });
+  }
+
   panelScroll.addEventListener("click", (event) => {
     const remove = event.target.closest("[data-remove]");
     if (remove) {
       api("/queue/" + encodeURIComponent(remove.dataset.remove) + "/remove").catch((error) => showError(error.message));
+      return;
+    }
+    const edit = event.target.closest("[data-edit]");
+    if (edit) {
+      startEdit(edit.dataset.edit);
+      return;
+    }
+    const changes = event.target.closest("[data-changes]");
+    if (changes) {
+      let selectors = [];
+      try {
+        selectors = JSON.parse(changes.dataset.changes);
+      } catch (_error) {
+        // Nothing to show.
+      }
+      toFrame("flash", { selectors });
       return;
     }
     const anchor = event.target.closest(".anchor");
@@ -388,18 +740,26 @@
     document.documentElement.classList.toggle("sheet-open", open);
     dock.setAttribute("aria-expanded", String(open));
     if (open) document.documentElement.classList.remove("has-unread");
+    remember(sheetKey, open ? "open" : "closed");
+  }
+
+  function remember(name, value) {
     try {
-      localStorage.setItem(sheetKey, open ? "open" : "closed");
+      localStorage.setItem(name, value);
     } catch (_error) {
       // Not remembered across reloads; nothing else depends on it.
     }
   }
 
-  try {
-    if (PHONE.matches && localStorage.getItem(sheetKey) === "open") setSheet(true);
-  } catch (_error) {
-    // Storage can be unavailable (private mode); the sheet starts closed.
+  function recall(name) {
+    try {
+      return localStorage.getItem(name);
+    } catch (_error) {
+      return null;
+    }
   }
+
+  if (PHONE.matches && recall(sheetKey) === "open") setSheet(true);
 
   // Tap the dock to toggle, the dimmed artifact to close; swipe the dock up
   // to open and down to close.
@@ -421,6 +781,35 @@
     else setSheet(!sheetOpen());
   });
   document.getElementById("sheet-scrim").addEventListener("click", () => setSheet(false));
+
+  // -- Collapsible conversation (desktop) -------------------------------------
+
+  const panelKey = "redline:panel:" + key;
+
+  function setPanel(open) {
+    root.classList.toggle("panel-collapsed", !open);
+    sidebarToggle.setAttribute("aria-expanded", String(open));
+    sidebarToggle.title = open ? "Hide the conversation" : "Show the conversation";
+    if (open) state.unread = false;
+    updateSidebarBadge();
+    remember(panelKey, open ? "open" : "collapsed");
+  }
+
+  // While hidden, the toggle counts queued notes or marks an unread reply.
+  function updateSidebarBadge() {
+    const collapsed = root.classList.contains("panel-collapsed");
+    if (!collapsed || (state.queued === 0 && !state.unread)) {
+      sidebarBadge.hidden = true;
+      return;
+    }
+    sidebarBadge.hidden = false;
+    sidebarBadge.classList.toggle("is-dot", state.queued === 0);
+    sidebarBadge.textContent = state.queued > 0 ? String(state.queued) : "";
+    sidebarToggle.setAttribute("aria-label", state.queued > 0 ? state.queued + " queued notes; show the conversation" : "New reply; show the conversation");
+  }
+
+  sidebarToggle.addEventListener("click", () => setPanel(root.classList.contains("panel-collapsed")));
+  if (recall(panelKey) === "collapsed") setPanel(false);
 
   // -- Top bar ------------------------------------------------------------------
 
@@ -454,7 +843,7 @@
         setMenu(false);
         break;
       case "reload":
-        reloadFrame(root.dataset.artifact + "?rev=" + Date.now());
+        reloadFrame(root.dataset.artifact + "?rev=" + state.revision + "&t=" + Date.now(), false);
         setMenu(false);
         break;
       case "end":
@@ -472,7 +861,7 @@
   });
 
   // Cmd/Ctrl+I toggles annotate/explore from anywhere on the page (the
-  // artifact forwards the same shortcut); Escape closes the menu or card.
+  // artifact forwards the same shortcut); Escape closes the menu or sheet.
   window.addEventListener(
     "keydown",
     (event) => {
@@ -491,8 +880,11 @@
     true,
   );
 
+  state.shownRevision = revisionOf(frame.src);
+
   panelScroll.scrollTop = panelScroll.scrollHeight;
   updateControls();
+  applyMeta();
   connect();
   // The artifact may have loaded (and said "ready") before this script ran.
   toFrame("hello");

@@ -56,6 +56,11 @@ type Manager struct {
 	Store *store.Store
 	Bus   *Bus
 	Grace time.Duration
+	// Attachments resolves images for the agent; nil means none can be
+	// attached.
+	Attachments interface {
+		Describe(store.AttachmentRef) (store.PromptAttachment, bool)
+	}
 
 	mu        sync.Mutex
 	sessions  map[string]*live
@@ -70,6 +75,16 @@ type live struct {
 	reviewers int
 	grace     *time.Timer
 	stopWatch func()
+
+	// The artifact's HTML at the latest and the previous revision, so a
+	// review page can measure what the agent changed.
+	sources Sources
+}
+
+// Sources is an artifact's HTML before and after its latest change.
+type Sources struct {
+	Revision          int
+	Previous, Current string
 }
 
 type holder struct {
@@ -104,6 +119,12 @@ func (m *Manager) ensure(key, file string) *live {
 		return l
 	}
 	l := &live{key: key, file: file}
+	if html, err := os.ReadFile(file); err == nil {
+		l.sources.Current = string(html)
+		if sess, err := m.Store.Session(context.Background(), key); err == nil {
+			l.sources.Revision = sess.ArtifactRevision
+		}
+	}
 	l.stopWatch = watch.File(file, func() { m.artifactChanged(key) })
 	m.sessions[key] = l
 	return l
@@ -117,12 +138,46 @@ func (m *Manager) Track(key, file string) {
 }
 
 func (m *Manager) artifactChanged(key string) {
-	if _, err := m.Store.BumpRevision(context.Background(), key); err != nil {
+	ctx := context.Background()
+	sess, err := m.Store.BumpRevision(ctx, key)
+	if err != nil {
 		log.Printf("record artifact change for %s: %v", key, err)
 		return
 	}
+	html, _ := os.ReadFile(sess.File)
+	m.mu.Lock()
+	if l := m.sessions[key]; l != nil {
+		l.sources = Sources{Revision: sess.ArtifactRevision, Previous: l.sources.Current, Current: string(html)}
+	}
+	m.mu.Unlock()
+
+	// The agent is working on what it was handed.
+	if worked, err := m.Store.MarkWorking(ctx, key); err != nil {
+		log.Printf("mark working for %s: %v", key, err)
+	} else if worked {
+		m.Bus.Publish(Event{Type: TranscriptChanged, Key: key})
+	}
 	m.Bus.Publish(Event{Type: Reload, Key: key})
 	m.Bus.Publish(Event{Type: SessionChanged, Key: key})
+}
+
+// Sources returns the artifact's HTML at its latest revision and the one
+// before it (empty when this server has not seen a change yet).
+func (m *Manager) Sources(key string) Sources {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if l := m.sessions[key]; l != nil {
+		return l.sources
+	}
+	return Sources{}
+}
+
+// Describe resolves an attached image for the agent.
+func (m *Manager) Describe(ref store.AttachmentRef) (store.PromptAttachment, bool) {
+	if m.Attachments == nil {
+		return store.PromptAttachment{}, false
+	}
+	return m.Attachments.Describe(ref)
 }
 
 // ListenerActiveError refuses a second poll on a session.

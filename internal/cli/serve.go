@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"syscall"
 
+	"github.com/riftsin/redline/internal/attachments"
 	"github.com/riftsin/redline/internal/netinfo"
 	"github.com/riftsin/redline/internal/review"
 	"github.com/riftsin/redline/internal/server"
@@ -80,13 +81,19 @@ func serverCommand(e *env, args []string) (string, error) {
 	defer st.Close()
 	m := review.NewManager(st, review.DisconnectGraceFromEnv())
 	defer m.Close()
+	att, err := attachments.Open(filepath.Join(dir, "attachments"), st, attachments.FromEnv(os.Getenv))
+	if err != nil {
+		return "", failure("cannot prepare the image store: " + err.Error())
+	}
+	m.Attachments = att
+	go att.RunSweeper(ctx)
 
 	plan := netinfo.Resolve(os.Getenv, netinfo.TailscaleStatus)
 	if plan.Warning != "" {
 		log.Print(plan.Warning)
 	}
 	port := netinfo.Port()
-	srv := server.New(m, plan, port, server.Info{Version: Version(), BuildID: BuildID(), StateID: id, StateDir: dir})
+	srv := server.New(m, att, plan, port, server.Info{Version: Version(), BuildID: BuildID(), StateID: id, StateDir: dir})
 	log.Printf("starting %s (%s, %s/%s) on port %d, links at %s", Version(), BuildID(), runtime.GOOS, runtime.GOARCH, port, plan.BaseURL(port))
 	if err := srv.Serve(ctx); err != nil {
 		log.Printf("server stopped: %v", err)

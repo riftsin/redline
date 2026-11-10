@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/riftsin/redline/internal/server"
 	"github.com/riftsin/redline/internal/store"
 )
 
@@ -285,5 +286,21 @@ func waitFor(t *testing.T, cond func() bool) {
 			t.Fatal("timed out")
 		}
 		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+func TestFeedbackShowsImagesAndNextStep(t *testing.T) {
+	var b strings.Builder
+	pr := server.PollResponse{Status: "feedback", Prompts: []store.Prompt{{
+		Kind: "message", Prompt: "",
+		Attachments: []store.PromptAttachment{{Path: "/state/attachments/ab.png", Mime: "image/png", Width: 32, Height: 24, Name: "shot.png"}},
+	}}}
+	writeFeedback(&b, "/w/plan.html", pr)
+	if want := "1. Message\n   image: /state/attachments/ab.png (png, 32x24, \"shot.png\")\n"; !strings.Contains(b.String(), want) {
+		t.Fatalf("output lacks %q:\n%s", want, b.String())
+	}
+	out, err := pollOutput(&env{}, "/w/plan.html", 200, pr)
+	if err != nil || !strings.Contains(out, "Open those image files") {
+		t.Fatalf("next step lacks the image note: %v\n%s", err, out)
 	}
 }

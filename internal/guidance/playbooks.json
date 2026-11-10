@@ -192,7 +192,8 @@
         "The agent's tracked-batch completion receipt must give every submitted ID exactly one outcome: addressed with concrete evidence, deferred with a reason, or rejected with a reason. Evidence may cover several IDs. Before declaring completion, compare the submitted ID set with the receipt ID set and surface every missing ID.",
         "A custom choice UI should make option buttons update local state, then use a separate Queue answer button with data-redline-action to queue the final selected value.",
         "Use window.redline.queuePrompt for user intent, not internal analytics or UI-only state changes.",
-        "End input paths with an obvious way for the user to send feedback back to the agent."
+        "End input paths with an obvious way for the user to send feedback back to the agent.",
+        "Opt-in: a long-lived artifact can show live state on the browser tab with `window.redline?.setDocumentMeta?.({ title, icon })`. The SDK is injected at the end of the body, so call it after the page loads (for example in a `load` listener); a string sets the field, `null` restores what the page loaded with, and an omitted field is left alone."
       ]
     },
     {

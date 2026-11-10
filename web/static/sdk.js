@@ -77,6 +77,12 @@
       case "reveal":
         reveal(payload.selector);
         break;
+      case "flash":
+        flash(payload.selectors);
+        break;
+      case "diff":
+        diffAndReport(payload);
+        break;
     }
   });
 
@@ -98,8 +104,11 @@
       ".flash{animation:flash 1.2s ease-out}" +
       "@keyframes flash{0%{box-shadow:0 0 0 8px rgba(" + ACCENT_RGB + ",.45)}100%{box-shadow:0 0 0 0 rgba(" + ACCENT_RGB + ",0)}}" +
       ".text{position:fixed;background:rgba(" + ACCENT_RGB + ",.28);border-radius:2px}" +
+      ".change{position:fixed;box-sizing:border-box;border:2px solid " + ACCENT + ";border-radius:4px;" +
+      "background:rgba(" + ACCENT_RGB + ",.14);animation:change 2.6s ease-out forwards}" +
+      "@keyframes change{0%,55%{opacity:1}100%{opacity:0}}" +
       "</style>" +
-      '<div class="box hover"></div><div class="box selected"></div><div class="texts"></div>';
+      '<div class="box hover"></div><div class="box selected"></div><div class="texts"></div><div class="flashes"></div>';
     (document.body || document.documentElement).appendChild(host);
     return overlayRoot;
   }
@@ -304,6 +313,323 @@
     }, 350);
   }
 
+  // Briefly outlines every given block, scrolling the first into view when
+  // none of them is visible.
+  function flash(selectors) {
+    const holder = overlay().querySelector(".flashes");
+    holder.textContent = "";
+    const els = [];
+    for (const sel of selectors || []) {
+      let el = null;
+      try {
+        el = typeof sel === "string" ? document.querySelector(sel) : null;
+      } catch (_error) {
+        el = null;
+      }
+      if (el) els.push(el);
+    }
+    if (els.length === 0) return;
+    const visible = (el) => {
+      const r = el.getBoundingClientRect();
+      return r.bottom > 0 && r.top < document.documentElement.clientHeight;
+    };
+    const draw = () => {
+      holder.textContent = "";
+      for (const el of els) {
+        const r = el.getBoundingClientRect();
+        if (r.width <= 0 || r.height <= 0) continue;
+        const box = document.createElement("div");
+        box.className = "change";
+        setBox(box, r, 4);
+        holder.appendChild(box);
+      }
+      setTimeout(() => {
+        holder.textContent = "";
+      }, 2700);
+    };
+    if (!els.some(visible)) {
+      els[0].scrollIntoView({ block: "center", behavior: "smooth" });
+      setTimeout(draw, 400);
+    } else {
+      draw();
+    }
+  }
+
+  // -- What changed ------------------------------------------------------------
+  //
+  // After the agent saves, the review page sends the source the reviewer saw
+  // and the new one. Both are parsed (never run) and compared as documents,
+  // so formatting - indentation, line breaks, attribute order or quoting,
+  // class order, comments - never counts as a change. Only the innermost
+  // changed blocks are reported and flashed; a page that changed almost
+  // everywhere is reported as rewritten instead.
+
+  const SKIPPED = { script: 1, style: 1, noscript: 1, template: 1, link: 1, meta: 1, title: 1, base: 1 };
+  const INLINE = {
+    a: 1, abbr: 1, b: 1, bdi: 1, bdo: 1, br: 1, cite: 1, code: 1, data: 1, dfn: 1, em: 1, i: 1, kbd: 1,
+    mark: 1, q: 1, s: 1, samp: 1, small: 1, span: 1, strong: 1, sub: 1, sup: 1, time: 1, u: 1, var: 1, wbr: 1,
+  };
+  const REWRITE_SHARE = 0.6;
+
+  function fnv(str) {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < str.length; i++) {
+      h ^= str.charCodeAt(i);
+      h = Math.imul(h, 0x01000193);
+    }
+    return (h >>> 0).toString(36);
+  }
+
+  function collapse(text) {
+    return text.replace(/\s+/g, " ").trim();
+  }
+
+  function shallow(el) {
+    const attrs = [];
+    for (const a of Array.from(el.attributes)) {
+      const value = a.name === "class" ? a.value.split(/\s+/).filter(Boolean).sort().join(" ") : collapse(a.value);
+      attrs.push(a.name + "=" + value);
+    }
+    attrs.sort();
+    return el.localName + "[" + attrs.join("|") + "]";
+  }
+
+  function significant(el) {
+    const out = [];
+    for (const child of Array.from(el.childNodes)) {
+      if (child.nodeType === 1 && !SKIPPED[child.localName]) out.push(child);
+      else if (child.nodeType === 3 && collapse(child.nodeValue) !== "") out.push(child);
+    }
+    return out;
+  }
+
+  function hashOf(node, memo) {
+    if (memo.has(node)) return memo.get(node);
+    let h;
+    if (node.nodeType === 3) h = "t" + fnv(collapse(node.nodeValue));
+    else h = "e" + fnv(shallow(node) + "{" + significant(node).map((c) => hashOf(c, memo)).join(",") + "}");
+    memo.set(node, h);
+    return h;
+  }
+
+  // Longest common subsequence of two hash lists; returns matched index pairs.
+  function lcs(a, b) {
+    if (a.length * b.length > 250000) return null;
+    const rows = a.length + 1;
+    const cols = b.length + 1;
+    const table = new Uint16Array(rows * cols);
+    for (let i = a.length - 1; i >= 0; i--) {
+      for (let j = b.length - 1; j >= 0; j--) {
+        table[i * cols + j] = a[i] === b[j] ? table[(i + 1) * cols + j + 1] + 1 : Math.max(table[(i + 1) * cols + j], table[i * cols + j + 1]);
+      }
+    }
+    const pairs = [];
+    let i = 0;
+    let j = 0;
+    while (i < a.length && j < b.length) {
+      if (a[i] === b[j]) {
+        pairs.push([i, j]);
+        i++;
+        j++;
+      } else if (table[(i + 1) * cols + j] >= table[i * cols + j + 1]) i++;
+      else j++;
+    }
+    return pairs;
+  }
+
+  function blockOf(el) {
+    while (el && el.parentElement && INLINE[el.localName]) el = el.parentElement;
+    return el;
+  }
+
+  function diffChildren(oldEl, newEl, oldMemo, newMemo, changed) {
+    const a = significant(oldEl);
+    const b = significant(newEl);
+    const pairs = lcs(a.map((n) => hashOf(n, oldMemo)), b.map((n) => hashOf(n, newMemo)));
+    if (pairs === null) {
+      changed.add(blockOf(newEl));
+      return;
+    }
+    pairs.push([a.length, b.length]);
+    let ai = 0;
+    let bi = 0;
+    for (const [ma, mb] of pairs) {
+      const oldGap = a.slice(ai, ma);
+      const newGap = b.slice(bi, mb);
+      let textChanged = false;
+      for (let k = 0; k < newGap.length; k++) {
+        const n = newGap[k];
+        const o = oldGap[k];
+        if (n.nodeType === 3) {
+          textChanged = true;
+        } else if (o && o.nodeType === 1 && shallow(o) === shallow(n)) {
+          diffChildren(o, n, oldMemo, newMemo, changed);
+        } else {
+          changed.add(blockOf(n));
+        }
+      }
+      if (oldGap.length > newGap.length) {
+        // Something was removed here: the surrounding block changed.
+        const removedText = oldGap.slice(newGap.length).some((n) => n.nodeType === 3);
+        if (removedText || newEl.localName !== "body") textChanged = true;
+        else if (b[mb]) changed.add(blockOf(b[mb]));
+      }
+      if (textChanged && newEl.localName !== "body") changed.add(blockOf(newEl));
+      ai = ma + 1;
+      bi = mb + 1;
+    }
+  }
+
+  function elementCount(el) {
+    return el.getElementsByTagName("*").length + 1;
+  }
+
+  function diffAndReport(payload) {
+    const revision = Number(payload.revision) || 0;
+    let selectors = [];
+    let rewrite = false;
+    try {
+      const parser = new DOMParser();
+      const before = parser.parseFromString(String(payload.previous || ""), "text/html").body;
+      const after = parser.parseFromString(String(payload.current || ""), "text/html").body;
+      const changed = new Set();
+      diffChildren(before, after, new Map(), new Map(), changed);
+      // Keep the innermost blocks only.
+      const list = Array.from(changed).filter((el) => el && el !== after);
+      const innermost = list.filter((el) => !list.some((other) => other !== el && el.contains(other)));
+      const total = elementCount(after);
+      const covered = innermost.reduce((sum, el) => sum + elementCount(el), 0);
+      if (total > 6 && covered / total > REWRITE_SHARE) rewrite = true;
+      else selectors = innermost.map((el) => selector(el)).filter((sel) => sel && document.querySelector(sel));
+    } catch (_error) {
+      selectors = [];
+    }
+    post("changes", { revision, selectors: rewrite ? [] : selectors, rewrite });
+    if (!rewrite && selectors.length) flash(selectors);
+  }
+
+  // -- Table cells -------------------------------------------------------------
+  //
+  // A clicked cell also carries its visible row and column names, so feedback
+  // still reads right when the table is sorted or filtered. A name is given
+  // only when it is provable: merged cells (rowspan/colspan) that make it
+  // ambiguous leave it out rather than guessing. An explicit
+  // <th scope="row"> is authoritative. (Adapted from lavish-axi.)
+
+  function tagOf(el) {
+    return String((el && (el.tagName || el.nodeName)) || "").toLowerCase();
+  }
+
+  function rowsIn(el) {
+    const rows = [];
+    for (const child of Array.from((el && el.children) || [])) {
+      const tag = tagOf(child);
+      if (tag === "td" || tag === "th" || tag === "table") continue;
+      if (tag === "tr") rows.push(child);
+      else rows.push(...rowsIn(child));
+    }
+    return rows;
+  }
+
+  function cellsOf(row) {
+    return Array.from((row && row.children) || []).filter((c) => tagOf(c) === "td" || tagOf(c) === "th");
+  }
+
+  function spanValue(cell, name, parsed) {
+    if (typeof parsed === "number" && Number.isInteger(parsed) && parsed >= 0) return parsed;
+    const digits = /^[\t\n\f\r ]*(\d+)/.exec(String((cell && cell.getAttribute && cell.getAttribute(name)) || ""));
+    return digits ? Number(digits[1]) : null;
+  }
+
+  function colSpan(cell) {
+    const span = spanValue(cell, "colspan", cell && cell.colSpan);
+    return span !== null && span >= 1 ? span : 1;
+  }
+
+  function spansRows(cell, distance) {
+    const span = spanValue(cell, "rowspan", cell && cell.rowSpan);
+    const rendered = span === null || span < 0 ? 1 : span;
+    return rendered === 0 || rendered > distance;
+  }
+
+  function rowGroup(table, row) {
+    let ancestor = (row && row.parentElement) || null;
+    while (ancestor && ancestor !== table) {
+      const tag = tagOf(ancestor);
+      if (tag === "thead" || tag === "tbody" || tag === "tfoot") return ancestor;
+      ancestor = ancestor.parentElement;
+    }
+    return table;
+  }
+
+  function rowIsShifted(table, row) {
+    if (!table || !row) return true;
+    const rows = rowsIn(rowGroup(table, row));
+    const index = rows.indexOf(row);
+    if (index < 0) return true;
+    for (let i = 0; i < index; i += 1) {
+      for (const cell of cellsOf(rows[i])) if (spansRows(cell, index - i)) return true;
+    }
+    return false;
+  }
+
+  function headerRowOf(table) {
+    const head = Array.from((table && table.children) || []).find((c) => tagOf(c) === "thead");
+    if (head) return rowsIn(head).slice(-1)[0] || null;
+    const first = rowsIn(table)[0];
+    const cells = cellsOf(first);
+    return cells.length > 0 && cells.every((c) => tagOf(c) === "th") ? first : null;
+  }
+
+  function cellText(el) {
+    return el ? excerpt(el) : "";
+  }
+
+  function columnLabel(headerRow, cells, index) {
+    if (!headerRow) return "";
+    const headers = cellsOf(headerRow);
+    const headerWidth = headers.reduce((sum, c) => sum + colSpan(c), 0);
+    const rowWidth = cells.reduce((sum, c) => sum + colSpan(c), 0);
+    if (headerWidth === 0 || headerWidth !== rowWidth) return "";
+    let start = 0;
+    for (let i = 0; i < index; i += 1) start += colSpan(cells[i]);
+    const end = start + colSpan(cells[index]);
+    let cursor = 0;
+    for (const header of headers) {
+      const next = cursor + colSpan(header);
+      if (cursor === start && next === end) return cellText(header);
+      if (start < next) return "";
+      cursor = next;
+    }
+    return "";
+  }
+
+  function tableCellTarget(el) {
+    const cell = el.closest && el.closest("td,th");
+    const row = cell && cell.closest("tr");
+    const table = row && row.closest("table");
+    if (!cell || !row || !table) return null;
+    const cells = cellsOf(row);
+    const index = cells.indexOf(cell);
+    if (index < 0) return null;
+    const headerRow = headerRowOf(table);
+    const shifted = rowIsShifted(table, row);
+    const gridShifted = shifted || (headerRow ? rowIsShifted(table, headerRow) : false);
+    const declared = cells.find(
+      (c) => tagOf(c) === "th" && String((c.getAttribute && c.getAttribute("scope")) || "").toLowerCase() === "row",
+    );
+    const allHeaders = cells.every((c) => tagOf(c) === "th");
+    const inHeader = headerRow === row || !!cell.closest("thead");
+    const rowHeading = inHeader ? null : declared || (allHeaders || shifted ? null : cells[0]);
+    return {
+      type: "table-cell",
+      selector: selector(cell).slice(0, 240),
+      rowLabel: cellText(rowHeading),
+      columnLabel: gridShifted ? "" : columnLabel(headerRow, cells, index),
+      text: cellText(cell),
+    };
+  }
+
   // -- Pointer ---------------------------------------------------------------
 
   document.addEventListener(
@@ -363,7 +689,10 @@
       selectedElement = el;
       selectedRange = null;
       redraw();
-      post("select-element", context(el));
+      const payload = context(el);
+      const cell = tableCellTarget(el);
+      if (cell && (cell.rowLabel || cell.columnLabel)) payload.target = cell;
+      post("select-element", payload);
     },
     true,
   );
@@ -455,11 +784,31 @@
     post("queue-prompt", item);
   }
 
+  // Lets a long-lived artifact keep the browser tab current. A string sets
+  // the field, null restores the value the page loaded with, and an omitted
+  // field is left as it is.
+  function setDocumentMeta(meta) {
+    const m = meta || {};
+    const out = {};
+    if (Object.prototype.hasOwnProperty.call(m, "title")) out.title = m.title === null ? null : String(m.title);
+    if (Object.prototype.hasOwnProperty.call(m, "icon")) out.icon = m.icon === null ? null : absolute(String(m.icon));
+    post("meta", out);
+  }
+
+  function absolute(href) {
+    try {
+      return new URL(href, location.href).href;
+    } catch (_error) {
+      return "";
+    }
+  }
+
   window.redline = {
     queuePrompt,
     sendQueuedPrompts: () => post("send"),
     endSession: () => post("end-session"),
     snapshot,
+    setDocumentMeta,
   };
 
   // -- Start -----------------------------------------------------------------
@@ -467,7 +816,12 @@
   let started = false;
 
   function announce() {
-    post("ready", { title: document.title || "", annotate: annotateDefault });
+    const icon = document.querySelector("link[rel~='icon'][href]");
+    post("ready", {
+      title: document.title || "",
+      icon: icon ? absolute(icon.getAttribute("href")) : "",
+      annotate: annotateDefault,
+    });
   }
 
   function ready() {

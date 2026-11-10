@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"image"
+	pngenc "image/png"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/riftsin/redline/internal/attachments"
 	"github.com/riftsin/redline/internal/netinfo"
 	"github.com/riftsin/redline/internal/paths"
 	"github.com/riftsin/redline/internal/review"
@@ -41,7 +44,7 @@ func newEnv(t *testing.T) *env {
 	}
 	m := review.NewManager(st, time.Minute)
 	plan := netinfo.Resolve(func(string) string { return "" }, func() []byte { return nil })
-	s := New(m, plan, 4389, Info{Version: "v0.0.0-test", StateID: "test"})
+	s := New(m, nil, plan, 4389, Info{Version: "v0.0.0-test", StateID: "test"})
 	srv := httptest.NewServer(s.Handler())
 	t.Cleanup(func() { srv.Close(); m.Close(); st.Close() })
 
@@ -396,5 +399,105 @@ func TestEventsStream(t *testing.T) {
 			t.Fatal("closing the stream did not unregister the reviewer")
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestAttachmentEndpoints(t *testing.T) {
+	e := newEnv(t)
+	e.open()
+	att, err := attachments.Open(filepath.Join(e.dir, "attachments"), e.m.Store, attachments.Limits{MaxBytes: 1 << 20, MaxDiskBytes: 1 << 30, TTL: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.m.Attachments = att
+	plan := netinfo.Resolve(func(string) string { return "" }, func() []byte { return nil })
+	e.srv.Config.Handler = New(e.m, att, plan, 4389, Info{Version: "test"}).Handler()
+
+	var png bytes.Buffer
+	if err := pngenc.Encode(&png, image.NewGray(image.Rect(0, 0, 3, 2))); err != nil {
+		t.Fatal(err)
+	}
+	upload := func(body []byte, headers map[string]string) (*http.Response, []byte) {
+		req, _ := http.NewRequest("POST", e.srv.URL+"/api/"+e.key+"/attachments", bytes.NewReader(body))
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		data, _ := io.ReadAll(resp.Body)
+		return resp, data
+	}
+
+	// The declared type is ignored; the bytes decide.
+	if resp, _ := upload([]byte("<svg onload=alert(1)>"), map[string]string{"Origin": e.srv.URL, "Content-Type": "image/png"}); resp.StatusCode != http.StatusUnsupportedMediaType {
+		t.Fatalf("svg upload: %d", resp.StatusCode)
+	}
+	if resp, _ := upload(png.Bytes(), map[string]string{"Origin": "http://evil.example"}); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("cross-origin upload: %d", resp.StatusCode)
+	}
+	resp, data := upload(png.Bytes(), map[string]string{"Origin": e.srv.URL})
+	var up struct{ ID, URL string }
+	if resp.StatusCode != 200 || json.Unmarshal(data, &up) != nil || up.ID == "" {
+		t.Fatalf("upload: %d %s", resp.StatusCode, data)
+	}
+	got, err := http.Get(e.srv.URL + up.URL)
+	if err != nil || got.StatusCode != 200 || got.Header.Get("Content-Type") != "image/png" || got.Header.Get("X-Content-Type-Options") != "nosniff" {
+		t.Fatalf("serve: %v %v", got.StatusCode, err)
+	}
+	got.Body.Close()
+	if r, _ := http.Get(e.srv.URL + "/attachments/../../etc/passwd"); r.StatusCode == 200 {
+		t.Fatal("path traversal served something")
+	}
+
+	big := make([]byte, 2<<20)
+	copy(big, png.Bytes())
+	if resp, _ := upload(big, map[string]string{"Origin": e.srv.URL}); resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversize upload: %d", resp.StatusCode)
+	}
+}
+
+func TestEditAndChangesEndpoints(t *testing.T) {
+	e := newEnv(t)
+	e.open()
+	e.do("POST", "/api/"+e.key+"/queue", map[string]any{"prompt": "old", "tag": "p"}, e.browser())
+	if resp, data := e.do("POST", "/api/"+e.key+"/queue/1/edit", map[string]any{"prompt": "new"}, e.browser()); resp.StatusCode != 200 {
+		t.Fatalf("edit: %d %s", resp.StatusCode, data)
+	}
+	if resp, _ := e.do("POST", "/api/"+e.key+"/queue/1/edit", map[string]any{"prompt": "  "}, e.browser()); resp.StatusCode != 400 {
+		t.Fatalf("blank edit: %d", resp.StatusCode)
+	}
+	if resp, _ := e.do("POST", "/api/"+e.key+"/queue/99/edit", map[string]any{"prompt": "x"}, e.browser()); resp.StatusCode != 404 {
+		t.Fatalf("edit of a missing note: %d", resp.StatusCode)
+	}
+
+	// A change can only be recorded for a revision that happened.
+	if resp, _ := e.do("POST", "/api/"+e.key+"/changes", map[string]any{"revision": 1, "selectors": []string{"p"}}, e.browser()); resp.StatusCode != 400 {
+		t.Fatalf("change for a future revision: %d", resp.StatusCode)
+	}
+	write(t, e.file, "<body><h1>Plan</h1><p>new</p></body>")
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var src struct {
+			Revision          int
+			Previous, Current string
+		}
+		_, data := e.do("GET", "/api/"+e.key+"/sources", nil, nil)
+		_ = json.Unmarshal(data, &src)
+		if src.Revision == 1 {
+			if !strings.Contains(src.Previous, "<h1>Plan</h1><!--") || !strings.Contains(src.Current, "<p>new</p>") {
+				t.Fatalf("sources = %+v", src)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("no revision 1")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if resp, _ := e.do("POST", "/api/"+e.key+"/changes", map[string]any{"revision": 1, "selectors": []string{"body > p"}}, e.browser()); resp.StatusCode != 200 {
+		t.Fatalf("record change: %d", resp.StatusCode)
 	}
 }
