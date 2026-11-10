@@ -326,6 +326,8 @@ Usage:
   redline end <html-file>
   redline export <html-file> [--out <path>]
   redline stop
+  redline setup hooks [--project]
+  redline setup skill [--project]
   redline playbook [playbook_id]
   redline design
   redline --version
@@ -347,7 +349,7 @@ Open or resume a redline review session for an HTML artifact. Use --no-open (or 
 	case "poll":
 		return `Usage: redline poll <html-file> [--owner <label>] [--takeover] [--agent-reply "..."] [--agent-reply-file <path>]
 
-Long-poll for the user's feedback. It stays silent while it waits - that is normal, never kill it. Pass --owner <label> to make the active listener visible in session listings; --takeover displaces an existing listener, which then fails with LISTENER_REPLACED. A second poll without --takeover fails with LISTENER_ACTIVE instead of silently waiting. The only response that arrives without user action is a fatal artifact failure that made the review surface itself unusable. Do not pass --timeout-ms during normal agent use; it is for tests and debugging only. ` + PollExecution(agent) + ` Use --agent-reply after applying prior feedback to display a concise response in the review page before waiting again. When you are handing a result back and are not about to long-poll, run ` + "`redline reply <html-file> --agent-reply \"...\"`" + ` instead: it exits 0 only after the server accepts the reply. ` + AgentReplyRule + ` Do not combine --agent-reply with --agent-reply-file.
+Long-poll for the user's feedback. It stays silent while it waits - that is normal, never kill it. In a Herdr-managed pane, set REDLINE_HERDR_CHIME=1 to show a Herdr notification and chime once the poll is waiting; notification failures never interrupt the poll. Pass --owner <label> to make the active listener visible in session listings; --takeover displaces an existing listener, which then fails with LISTENER_REPLACED. A second poll without --takeover fails with LISTENER_ACTIVE instead of silently waiting. The only response that arrives without user action is a fatal artifact failure that made the review surface itself unusable. Do not pass --timeout-ms during normal agent use; it is for tests and debugging only. ` + PollExecution(agent) + ` Use --agent-reply after applying prior feedback to display a concise response in the review page before waiting again. When you are handing a result back and are not about to long-poll, run ` + "`redline reply <html-file> --agent-reply \"...\"`" + ` instead: it exits 0 only after the server accepts the reply. ` + AgentReplyRule + ` Do not combine --agent-reply with --agent-reply-file.
 
 Examples:
   redline poll report.html --agent-reply "Renamed the payment step."
@@ -373,6 +375,16 @@ Examples:
 		return `Usage: redline end <html-file>
 
 End a review session as the agent. A session ended this way still reopens normally on the next ` + "`redline <html-file>`" + `, unlike a user ending it from the browser, which requires --reopen.
+`
+	case "setup":
+		return `Usage: redline setup hooks [--project]
+       redline setup skill [--project]
+
+hooks: install or repair SessionStart hooks that give every new agent session redline's context (open review sessions, playbooks, usage) in Claude Code, Codex, OpenCode and GitHub Copilot CLI. Restart the agent session afterward. Only redline's own entries are touched; other hooks and settings are preserved.
+
+skill: install or refresh the redline Agent Skill (~/.claude/skills/redline/SKILL.md) so agents that support skills (Claude Code: /redline) load redline on demand.
+
+--project writes into the current project instead of your home directory. Both actions are explicit and idempotent.
 `
 	case "stop":
 		return `Usage: redline stop

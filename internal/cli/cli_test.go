@@ -320,3 +320,31 @@ func TestFeedbackShowsImagesAndNextStep(t *testing.T) {
 		t.Fatalf("next step lacks the image note: %v\n%s", err, out)
 	}
 }
+
+func TestSetupWithRealBinary(t *testing.T) {
+	b := buildBinary(t)
+	home := t.TempDir()
+	b.env = append(b.env, "HOME="+home, "COPILOT_HOME=", "PATH="+filepath.Dir(b.path)+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	out, code := b.run("setup", "hooks")
+	if code != 0 || !strings.Contains(out, "Installed redline's SessionStart hooks") || !strings.Contains(out, filepath.Join(home, ".claude", "settings.json")) {
+		t.Fatalf("setup hooks: exit %d\n%s", code, out)
+	}
+	out, code = b.run("setup", "skill")
+	if code != 0 || !strings.Contains(out, filepath.Join(home, ".claude", "skills", "redline", "SKILL.md")) {
+		t.Fatalf("setup skill: exit %d\n%s", code, out)
+	}
+	if out, code := b.run("setup", "nonsense"); code != 2 || !strings.Contains(out, "unknown setup action") {
+		t.Fatalf("bad action: exit %d\n%s", code, out)
+	}
+
+	// What the Copilot hook runs: JSON with the home view, no server started.
+	out, code = b.run("hook", "copilot")
+	var ctx map[string]string
+	if code != 0 || json.Unmarshal([]byte(out), &ctx) != nil || !strings.Contains(ctx["additionalContext"], "OPEN SESSIONS") {
+		t.Fatalf("hook copilot: exit %d\n%s", code, out)
+	}
+	if out, _ := b.run("stop"); !strings.Contains(out, "not running") {
+		t.Fatalf("the hook must not start a server: %s", out)
+	}
+}

@@ -21,6 +21,22 @@ go install github.com/riftsin/redline@latest
 Any agent that can run shell commands can use redline: ask it to use `redline`. Running `redline`
 with no arguments prints what an agent needs to get started.
 
+### Connect your agent
+
+To make redline discoverable and give every session its context:
+
+```sh
+redline setup skill    # Agent Skill -> ~/.claude/skills/redline (Claude Code: /redline)
+redline setup hooks    # SessionStart hooks: Claude Code, Codex, OpenCode, GitHub Copilot CLI
+```
+
+Both are explicit, idempotent, touch only redline's own entries, and accept `--project` to write into
+the current project instead. The hooks show your open review sessions at the start of each agent
+session, so a fresh session can resume an in-flight review; restart the agent afterwards.
+
+In a Herdr-managed pane, set `REDLINE_HERDR_CHIME=1` to get a Herdr notification and chime when a
+poll starts waiting for your feedback.
+
 ## How it works
 
 ```
@@ -97,6 +113,7 @@ its text could be invisible depending on where it is shown.
 | `redline export <html-file> [--out <path>]` | Write a portable copy with local assets inlined |
 | `redline stop` | Stop the background server |
 | `redline design` | Design guidance and the Tailwind + DaisyUI snippets (served locally at `/design/*`, or from a CDN) |
+| `redline setup hooks\|skill [--project]` | Install the agent SessionStart hooks or the Agent Skill |
 | `redline playbook [id]` | Artifact playbooks: diagram, table, comparison, plan, code, input, explanation, slides |
 
 Output is plain text. Failures print `redline: <message>` with `hint:` lines and exit 2 for invalid

@@ -48,3 +48,6 @@ Run `scripts/check.sh` and the e2e tests before pushing.
   (Chrome drops input aimed at an unpainted frame). Wait for state with `WaitFor`, never fixed sleeps,
   except to let a CSS transition settle before clicking a moving element.
 - Tests that start a server set `REDLINE_STATE_DIR` to a temp dir and use an ephemeral port.
+- Tests of `setup hooks` / `setup skill` use a temp `HOME`; never run them against the real one.
+- `skills/redline/SKILL.md` is generated from `integrations.Skill()`; a test fails when it drifts.
+  Regenerate with `REDLINE_UPDATE_SKILL=1 go test ./internal/integrations/`.

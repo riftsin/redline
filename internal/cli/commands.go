@@ -21,6 +21,7 @@ import (
 
 	"github.com/riftsin/redline/internal/export"
 	"github.com/riftsin/redline/internal/guidance"
+	"github.com/riftsin/redline/internal/integrations"
 	"github.com/riftsin/redline/internal/selfpaint"
 	"github.com/riftsin/redline/internal/server"
 	"github.com/riftsin/redline/internal/store"
@@ -224,6 +225,10 @@ func pollCommand(e *env, args []string) (string, error) {
 		return "", interrupted(file)
 	}
 	defer resp.Body.Close()
+	// Only an indefinite poll that actually starts waiting chimes.
+	if resp.Header.Get(server.PollStateHeader) == "listening" && *timeoutMS < 0 && integrations.HerdrChimeEnabled(e.getenv) {
+		integrations.HerdrChime()
+	}
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", interrupted(file)
