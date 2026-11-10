@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      # Same version as scripts/check.sh is run with locally.
+      - run: go install honnef.co/go/tools/cmd/staticcheck@v0.8.2
+      - run: scripts/check.sh
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      # GitHub's Ubuntu runners ship Google Chrome.
+      - run: go test -tags e2e -race -count=1 ./e2e/...
